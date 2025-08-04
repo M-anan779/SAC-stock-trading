@@ -1,7 +1,7 @@
-from src.pipeline import data_loader as loader
-from src.pipeline import data_parser as parser
-from src.pipeline import data_aggregator as aggregator
-from src.pipeline import data_preprocessor as preprocessor
+from pipeline import data_loader as loader
+from pipeline import data_parser as parser
+from pipeline import data_aggregator as aggregator
+from pipeline import data_preprocessor as preprocessor
 
 
 def main():

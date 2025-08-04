@@ -5,11 +5,13 @@ __pycache__/
 *.pyd
 
 # Virtual env
-venv/
-.env/
+env/
 
 # OS junk
 .DS_Store
 
 # Ignore data
 data/
+
+# Ignore logs
+logs/

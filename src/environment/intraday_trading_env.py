@@ -8,9 +8,7 @@ from math import log
 from torch.utils.tensorboard import SummaryWriter
 
 project_root = Path(__file__).resolve().parents[2]
-data_dir = project_root / 'data'
-aggregated_dir = data_dir / 'aggregated'
-processed_dir = data_dir / 'processed'
+data_dir = project_root / 'data' / 'processed_tickers_5-minute'
 
 class PositionNode:
     # position data
@@ -34,11 +32,15 @@ class PositionLedger:
     
     # add when entering a new position
     def add_position(self, buy_delta, position_price):
+        if (buy_delta == 0.0):
+            return
         node = PositionNode(buy_delta, self.cash, position_price)
         self._push(node)
     
     # return shares needed to exit position
     def sell_position(self, sell_delta):
+        if (sell_delta == 0.0):
+            return 0
         total_delta = 0
         total_shares = 0
 
@@ -81,7 +83,7 @@ class TradingEnv(gym.Env):
         self.states = None 
         self.window_size = 12
         self.action_space = spaces.Box(low=-1, high=1, shape = (1, ), dtype = np.float32)
-        self.observation_space = spaces.Box(low=0, high=1, shape = (self.window_size, 14), dtype = np.float32)
+        self.observation_space = spaces.Box(low=-1, high=1, shape = (self.window_size, 9), dtype = np.float32)
         self.log_df = pd.DataFrame(columns=[
             'date', 'ticker', 'avl_cash', 'market_price', 'shares', 'action', 'nav', 'reward'
             ])
@@ -96,19 +98,26 @@ class TradingEnv(gym.Env):
         self.nav_idx = 4
         self.reward_idx = 5
 
-        # load ticker files
-        self.ticker_file_paths = [f for f in processed_dir.iterdir()]
-        ticker_df = pd.read_csv(self.ticker_file_paths[0])
+        self.minmax_dict = {}
 
-        # compute global min, max per column for normalization later
-        df = ticker_df.drop(columns = ['date', 'window_start', 'ticker'])
-        self.global_max = df.max()
-        self.global_min = df.min()
-        
-        # group ticker files by date
+        # load ticker files and group episodes
+        self.ticker_file_paths = [f for f in data_dir.iterdir()]
         self.episode_df_list = []
-        for _, group in ticker_df.groupby('date'):
-            self.episode_df_list.append(group)
+        for file in data_dir.iterdir():
+            df = pd.read_csv(file)
+            '''
+            if (df['ticker'].iloc[0] != 'AAPL'):
+                continue
+            '''
+            temp_df = df.drop(columns=['date', 'ticker'])
+            
+            minmax = {}
+            for col in temp_df.columns.tolist():
+                minmax[col] = (df[col].min(), df[col].max())
+            self.minmax_dict[file.stem] = minmax
+            
+            for _, group in df.groupby('date'):
+                self.episode_df_list.append(group)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -117,13 +126,16 @@ class TradingEnv(gym.Env):
         self.positions = PositionLedger(self.init_cash)
         self.current_step = 0
         t = self.current_step        
-        self.current_episode = np.random.randint(0, len(self.episode_df_list))
 
         # reset previous states and compute state transitions
-        self.states = []
-        self.obs = []        
-        group_df = self.episode_df_list[self.current_episode]
-        self._window_helper(group_df)       # handles normalization internally
+        while True:
+            self.states = []
+            self.obs = []
+            self.current_episode = np.random.randint(0, len(self.episode_df_list))
+            self._window_helper(self.episode_df_list[self.current_episode])
+            if len(self.obs) > 15:
+                break
+            print(f"[WARNING] Skipping empty episode index {self.current_episode}")
         
         # return normalized obs
         observation = self._get_obs(t)
@@ -133,7 +145,14 @@ class TradingEnv(gym.Env):
     def step(self, action):
         # store action
         action = np.clip(action, -1, 1)
+        action = np.round(action, 1)
         t = self.current_step
+        if action > 0.3:
+            action = 1.0
+        elif action < -0.3:
+            action = 1.0
+        else:
+            action = 0.0
         self.states[t][self.action_idx] = action
 
         # compute trade and retrieve reward
@@ -163,7 +182,7 @@ class TradingEnv(gym.Env):
         self.current_step += 1
         observation = self._get_obs(t)
         truncated = False
-        
+
         return observation, reward, terminate, truncated, {}
     
     def _get_obs(self, t):
@@ -171,7 +190,7 @@ class TradingEnv(gym.Env):
    
     def _get_reward(self, t):
         # check t == 0 and adjust t accordingly to prevent out of bounds error
-        prev_t = self._check_index(t)
+        #prev_t = self._check_index(t)
 
         # initialization and partial computation
         avl_cash = self.states[t][self.avl_cash_idx]
@@ -179,23 +198,48 @@ class TradingEnv(gym.Env):
         market_price = self.states[t][self.marketprice_idx]
 
         nav = avl_cash + abs(shares * market_price)
-        prev_nav = self.states[prev_t][self.nav_idx] 
-        self.states[t][self.nav_idx] = nav              # store current nav for next timestep
+        self.states[t][self.nav_idx] = nav   # store current nav for next timestep
+        
+        reward = 0
+        curr_action = self.states[t][self.action_idx]
 
-        # compute reward
-        curr_reward = log(nav / prev_nav)
-        prev_reward = self.states[prev_t][self.reward_idx]
-        self.states[t][self.reward_idx] = curr_reward + prev_reward    # rewards are cumulative
+        if (t) % 3 == 0 and t != 0:             # long trend actions
+            prev_nav = self.states[t-3][self.nav_idx]
+            prev_action = self.states[t-3][self.action_idx]
+            adjustment = (nav - prev_nav) / prev_nav
+            
+            if (curr_action == prev_action) and curr_action != 0:       # agent is holding trade
+                reward += 30 * adjustment
+            elif (curr_action != prev_action) and curr_action == 0:     # agent has sold trade after holding
+                reward += 30 * adjustment
+
+        elif t != 0 and curr_action != 0:       # intermediate actions
+            prev_nav = self.states[t-1][self.nav_idx]
+            prev_action = self.states[t-1][self.action_idx]
+            adjustment = (nav - prev_nav) / prev_nav
+            
+            if (curr_action != prev_action):    # agent has just entered trade
+                reward += 7 * adjustment
+            elif (curr_action == prev_action):  # agent is holding trade
+                reward += 7 * adjustment
+        
+        elif t != 0 and curr_action == 0:       # incentivize minor passive holding for two steps
+            prev_action = self.states[t-1][self.action_idx]
+            if curr_action == prev_action:
+                reward += 0.002
+
+        reward *= 100
+        self.states[t][self.reward_idx] = reward
 
     def _window_helper(self, episode_df):
-        # store date and ticker info for logging at episode end
-        self.current_ep_date = episode_df['date'].iloc[0]
+        # store date for logging at episode end
         self.current_ep_ticker = episode_df['ticker'].iloc[0]
+        self.current_ep_date = episode_df['date'].iloc[0]
         market_price = episode_df['market_price']
         
         # drop unnecessary info and normalize data
-        episode_df = episode_df.drop(columns = ['date', 'window_start', 'ticker'])
-        normalized_group = self._normalize_df(episode_df)
+        episode_df = episode_df.drop(columns = ['date', 'ticker', 'market_price'])
+        normalized_group = self._normalize_df(episode_df, self.current_ep_ticker)
         
         # compute and store obs and meta (info) vector
         for i in range(len(episode_df) - self.window_size + 1):
@@ -211,10 +255,17 @@ class TradingEnv(gym.Env):
         self.states = np.array(self.states, dtype=np.float32)       # info for logging
         self.obs = np.array(self.obs, dtype=np.float32)             # obs for training 
     
-    def _normalize_df(self, df):
+    def _normalize_df(self, df, ticker):
+        df_normalized = df.copy() 
         # min-max normalization per column for current episode
-        df_normalized = (df - self.global_min) / (self.global_max - self.global_min)
-        df_normalized = df_normalized.clip(0, 1)
+        for col in df.columns.tolist():
+            if col == 'time_since_reversal':
+                df_normalized[col] = 2 * (df[col] / 78) - 1
+                df_normalized[col] = norm_col.clip(-1, 1)
+            else:
+                min, max = self.minmax_dict[ticker][col]
+                norm_col = 2 * ((df[col] - min) / (max - min)) - 1
+                df_normalized[col] = norm_col.clip(-1, 1)
 
         return df_normalized
 
@@ -230,15 +281,16 @@ class TradingEnv(gym.Env):
         if action <= 0 and prev_action <= 0:
             if action < prev_action:
                 self._buy(action, prev_action, 'SB', t, reversal=False)
-            elif action > prev_action:
+            elif action >= prev_action:
                 self._sell(action, prev_action, 'SS', t)
 
         # determine whether action is "sell long position (LS)" or "buy long position (LB)"
         elif action >= 0 and prev_action >= 0:
-            if action < prev_action:
+            if action <= prev_action:
                 self._sell(action, prev_action, 'LS', t)
             elif action > prev_action:
                 self._buy(action, prev_action, 'LB', t, reversal=False)
+
 
         # determine whether action is "short reversal-> sell short position + buy new long position" 
         # or "long reversal-> sell long position + buy new short position"

@@ -1,8 +1,7 @@
 import os
 import pandas as pd
 from pathlib import Path
-from tqdm import tqdm
-from src.utils.technical_indicators import TechnicalIndicators
+from utils.technical_indicators import TechnicalIndicators
 
 def vectorizedinput(ticker_df, processed_dir):
     ticker_name = ticker_df['ticker'].iloc[0]
