@@ -3,9 +3,9 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import os
+import math
 from pathlib import Path
-from math import log
-from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 project_root = Path(__file__).resolve().parents[2]
 data_dir = project_root / 'data' / 'processed_tickers_5-minute'
@@ -16,6 +16,7 @@ class PositionNode:
         self.delta_a = delta_a
         self.cash = cash
         self.position_price = position_price
+        self.shares = (delta_a * cash) / position_price
 
 class PositionLedger:
     def __init__(self, init_cash):
@@ -31,44 +32,59 @@ class PositionLedger:
         self.ledger.append(node)
     
     # add when entering a new position
-    def add_position(self, buy_delta, position_price):
+    def add_position(self, buy_delta, flag, position_price):
         if (buy_delta == 0.0):
-            return
-        node = PositionNode(buy_delta, self.cash, position_price)
-        self._push(node)
-    
-    # return shares needed to exit position
-    def sell_position(self, sell_delta):
-        if (sell_delta == 0.0):
-            return 0
-        total_delta = 0
-        total_shares = 0
-
-        # get latest position
-        while self.ledger and total_delta < sell_delta:
+            market_price = position_price
             top = self._pop()
             position_price = top.position_price
-            current_delta = top.delta_a
-            projected_delta = total_delta + current_delta
-
-            if projected_delta > sell_delta:
-                # partial sale
-                used_delta = sell_delta - total_delta
-                total_shares += used_delta * self.cash / position_price
-
-                remaining_delta = current_delta - used_delta
-                if remaining_delta > 0:
-                    top.delta_a = remaining_delta
-                    self._push(top)     # if a position is not completely sold
-
-                total_delta += used_delta
+            shares = top.shares    
+            pnl = self.get_pnl(flag, market_price, position_price, shares)
             
-            # full sale
-            else:
-                total_shares += sell_delta * self.cash / position_price
-                total_delta += sell_delta
+            self._push(top)
+            
+            return pnl
+        else: 
+            node = PositionNode(buy_delta, self.cash, position_price)
+            self._push(node)
+            
+            return 0.0
+    
+    # return shares needed to exit position
+    def sell_position(self, sell_delta, t, flag, market_price):
+        if (sell_delta == 0.0):
+            return 0.0, 0.0
+        total_shares = 0
+        total_pnl = 0
+        top = self._pop()
+        
+        position_price = top.position_price     
+    
+        current_delta = top.delta_a
+        shares_to_sell = sell_delta * self.cash / position_price
+        
+        remaining = current_delta - sell_delta
+        if remaining < 0:
+            total_shares, total_pnl = self.sell_position(remaining, t, flag, market_price)
+        else:
+            top.delta_a = remaining
+            self._push(top)
+        
+        shares_to_sell = (sell_delta * self.cash) / position_price
+        total_shares += shares_to_sell
 
-        return total_shares
+        total_pnl += self.get_pnl(flag, market_price, position_price, shares_to_sell)
+
+        return total_shares, total_pnl
+    
+    def get_pnl(self, flag, market_price, position_price, shares):
+        if (flag == "L"):
+            pnl = (market_price - position_price) * shares
+        elif (flag == "S"):
+            pnl = -1 * (market_price - position_price) * shares
+        else:
+            pnl = 0.0
+        return pnl
+    
 
 class TradingEnv(gym.Env):
 
@@ -77,25 +93,25 @@ class TradingEnv(gym.Env):
 
         # initialization
         self.current_step = 0
+        self.global_step = 0
         self.current_episode = 0
-        self.init_cash = 100000
-        self.timesteps = 0
+        self.init_cash = 50000
         self.states = None 
         self.window_size = 12
         self.action_space = spaces.Box(low=-1, high=1, shape = (1, ), dtype = np.float32)
         self.observation_space = spaces.Box(low=-1, high=1, shape = (self.window_size, 9), dtype = np.float32)
         self.log_df = pd.DataFrame(columns=[
-            'date', 'ticker', 'avl_cash', 'market_price', 'shares', 'action', 'nav', 'reward'
+            'date', 'ticker', 'avl_cash', 'market_price', 'shares', 'action', 'pnl', 'reward'
             ])
 
-        self.writer = SummaryWriter(log_dir="logs/nav_logging")
+        self.start_time = datetime.now().strftime("%m%d-%H%M")
 
         # meta vector index order
         self.avl_cash_idx = 0
         self.marketprice_idx = 1
         self.shares_idx = 2
         self.action_idx = 3
-        self.nav_idx = 4
+        self.pnl_idx = 4
         self.reward_idx = 5
 
         self.minmax_dict = {}
@@ -105,10 +121,10 @@ class TradingEnv(gym.Env):
         self.episode_df_list = []
         for file in data_dir.iterdir():
             df = pd.read_csv(file)
-            '''
+            
             if (df['ticker'].iloc[0] != 'AAPL'):
                 continue
-            '''
+            
             temp_df = df.drop(columns=['date', 'ticker'])
             
             minmax = {}
@@ -139,97 +155,100 @@ class TradingEnv(gym.Env):
         
         # return normalized obs
         observation = self._get_obs(t)
-
+        
         return observation, {}      # return empty info, handled internally
     
-    def step(self, action):
-        # store action
+    def step(self, action):       
+        t = self.current_step
+
+        # clean and store action
         action = np.clip(action, -1, 1)
         action = np.round(action, 1)
-        t = self.current_step
-        if action > 0.3:
-            action = 1.0
-        elif action < -0.3:
-            action = 1.0
-        else:
+        action = abs(action) 
+        if action <= 0.5:
             action = 0.0
+        else:
+            action = 1
         self.states[t][self.action_idx] = action
 
         # compute trade and retrieve reward
         self._trade_helper(t)
         reward = self.states[t][self.reward_idx]
 
+        # increment step
+        self.current_step += 1
+        self.global_step += 1
+        observation = self._get_obs(t)
+        truncated = False
+
         # check for episode end and log results
         terminate = False
         if t == len(self.states)-1:
             terminate = True
             df = pd.DataFrame(self.states, columns=[
-                    "avl_cash", "market_price", "shares", "action", "nav", "reward"
+                    "avl_cash", "market_price", "shares", "action", "pnl", "reward"
                 ])
             
             df.insert(0, "ticker", self.current_ep_ticker)
             df.insert(0, "date", self.current_ep_date)
             self.log_df = pd.concat([self.log_df, df], ignore_index=True)
 
-            csv_path = "logs/trades_log.csv"
+            ep_pnl = df["pnl"].sum()
+            info = {"episode_pnl": ep_pnl}
+            
+            csv_path = os.path.join("logs", "trades-" + self.start_time + ".csv")
             df.to_csv(csv_path, mode="a", index=False, header=not os.path.exists(csv_path))
-
-            eod_nav = self.states[t][self.nav_idx]      # log nav on tensorboard
-            self.writer.add_scalar('env/eod_nav', eod_nav, self.current_episode)
-            self.writer.flush() 
+        else:
+            info = {}
         
-        # increment step
-        self.current_step += 1
-        observation = self._get_obs(t)
-        truncated = False
-
-        return observation, reward, terminate, truncated, {}
+        return observation, reward, terminate, truncated, info
     
     def _get_obs(self, t):
         return self.obs[t]
    
     def _get_reward(self, t):
-        # check t == 0 and adjust t accordingly to prevent out of bounds error
-        #prev_t = self._check_index(t)
-
-        # initialization and partial computation
-        avl_cash = self.states[t][self.avl_cash_idx]
-        shares = self.states[t][self.shares_idx]
-        market_price = self.states[t][self.marketprice_idx]
-
-        nav = avl_cash + abs(shares * market_price)
-        self.states[t][self.nav_idx] = nav   # store current nav for next timestep
-        
         reward = 0
-        curr_action = self.states[t][self.action_idx]
-
-        if (t) % 3 == 0 and t != 0:             # long trend actions
-            prev_nav = self.states[t-3][self.nav_idx]
-            prev_action = self.states[t-3][self.action_idx]
-            adjustment = (nav - prev_nav) / prev_nav
-            
-            if (curr_action == prev_action) and curr_action != 0:       # agent is holding trade
-                reward += 30 * adjustment
-            elif (curr_action != prev_action) and curr_action == 0:     # agent has sold trade after holding
-                reward += 30 * adjustment
-
-        elif t != 0 and curr_action != 0:       # intermediate actions
-            prev_nav = self.states[t-1][self.nav_idx]
+        if t != 0:
+            pnl = self.states[t][self.pnl_idx]
+            curr_action = self.states[t][self.action_idx]
             prev_action = self.states[t-1][self.action_idx]
-            adjustment = (nav - prev_nav) / prev_nav
+            target = 0.005 * self.init_cash      # profit target: 0.5% of portfolio value
             
-            if (curr_action != prev_action):    # agent has just entered trade
-                reward += 7 * adjustment
-            elif (curr_action == prev_action):  # agent is holding trade
-                reward += 7 * adjustment
-        
-        elif t != 0 and curr_action == 0:       # incentivize minor passive holding for two steps
-            prev_action = self.states[t-1][self.action_idx]
+            relative = (pnl / target)
+
             if curr_action == prev_action:
-                reward += 0.002
+                # holding no position
+                if curr_action == 0:
+                    reward = 0.0
+                
+                # holding position
+                else:
+                    if pnl > 0:
+                        reward = relative * 1.25     # greater emphasis on sustaining short term profit
+                    else:
+                        if relative <= -1:
+                            reward = relative * 1.5
+                        else:
+                            reward = relative
+            else:
+                # sold position
+                if curr_action ==  0:
+                    
+                    # profit
+                    if pnl > 0:
+                        reward = relative * 2.5
+                    
+                    # loss
+                    else:
+                        reward = relative * 3    # greater loss ratio
+                
+                # bought position
+                else:
+                    reward = 0.0
+        
+        reward = np.tanh(reward) * 2
+        self.states[t][self.reward_idx] += reward
 
-        reward *= 100
-        self.states[t][self.reward_idx] = reward
 
     def _window_helper(self, episode_df):
         # store date for logging at episode end
@@ -277,20 +296,23 @@ class TradingEnv(gym.Env):
         else:
             prev_action = self.states[t-1][self.action_idx]
 
-        # determine whether action is "suy short position (SB)" or "sell short position (SS)"
-        if action <= 0 and prev_action <= 0:
-            if action < prev_action:
+        if action == 0 and prev_action == 0:
+            self.states[t][self.pnl_idx] = 0.0
+            self.states[t][self.avl_cash_idx] = self.states[t-1][self.avl_cash_idx]
+
+        # determine whether action is "buy short position (SB)" or "sell short position (SS)"
+        elif action <= 0 and prev_action <= 0:
+            if action <= prev_action:
                 self._buy(action, prev_action, 'SB', t, reversal=False)
-            elif action >= prev_action:
+            elif action > prev_action:
                 self._sell(action, prev_action, 'SS', t)
 
         # determine whether action is "sell long position (LS)" or "buy long position (LB)"
         elif action >= 0 and prev_action >= 0:
-            if action <= prev_action:
+            if action < prev_action:
                 self._sell(action, prev_action, 'LS', t)
-            elif action > prev_action:
+            elif action >= prev_action:
                 self._buy(action, prev_action, 'LB', t, reversal=False)
-
 
         # determine whether action is "short reversal-> sell short position + buy new long position" 
         # or "long reversal-> sell long position + buy new short position"
@@ -328,23 +350,24 @@ class TradingEnv(gym.Env):
         if flag == 'LB':                            # buy long position
             avl_cash -= new_shares * market_price
             current_shares = prev_shares + new_shares
+            pnl = self.positions.add_position(abs(delta_a), 'L', market_price)
 
         elif flag == 'SB':                          # buy short position
             avl_cash -= new_shares * market_price
             current_shares = prev_shares - new_shares
+            pnl = self.positions.add_position(abs(delta_a), 'S', market_price)
         
         # update info to finalize trade
         self.states[t][self.avl_cash_idx] = avl_cash
         self.states[t][self.shares_idx] = current_shares
         
         # add new position for future sale calculations
-        self.positions.add_position(abs(delta_a), market_price)
+        self.states[t][self.pnl_idx] = pnl
 
     def _sell(self, action, prev_action, flag, t):
         prev_t = self._check_index(t)       # check t == 0
         
         delta_a = action - prev_action
-        new_shares = self.positions.sell_position(abs(delta_a)) # retrieve correct amount of shares to sell depending on position price and delete the position
         current_shares = self.states[t][self.shares_idx]
         prev_shares = self.states[prev_t][self.shares_idx]
 
@@ -353,16 +376,19 @@ class TradingEnv(gym.Env):
 
         # calculate available cash and current share holdings for new trade
         if flag == 'LS':                                # sell long position
+            new_shares, pnl = self.positions.sell_position(abs(delta_a), t, 'L', market_price) # retrieve correct amount of shares to sell depending on position price and delete the position
             avl_cash += new_shares * market_price
             current_shares = prev_shares - new_shares
 
         elif flag == 'SS':                              # sell short position
+            new_shares, pnl = self.positions.sell_position(abs(delta_a), t, 'S', market_price)
             avl_cash += new_shares * market_price
             current_shares = prev_shares + new_shares
         
         # update info to finalize trade
         self.states[t][self.avl_cash_idx] = avl_cash
         self.states[t][self.shares_idx] = current_shares
+        self.states[t][self.pnl_idx] = pnl
     
     def _check_index(self, t):
         if (t == 0):
