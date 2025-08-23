@@ -2,12 +2,14 @@ import os
 import gymnasium as gym
 import torch
 import torch.nn as nn
-from stable_baselines3 import SAC
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.callbacks import EvalCallback
-from stable_baselines3.common.monitor import Monitor
 from datetime import datetime
-from environment.intraday_trading_env import TradingEnv 
+from stable_baselines3 import SAC
+from environment.intraday_trading_env import TradingEnv
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback
+from torch.utils.tensorboard import SummaryWriter 
 
 print(torch.cuda.get_device_name(0))        # check whether using GPU
 
@@ -37,7 +39,7 @@ model = SAC(
     tensorboard_log=log_dir,
     policy_kwargs=dict(
         activation_fn=nn.Tanh,     
-        net_arch=[256, 256]        
+        net_arch=[256, 256, 256]        
     ),
     learning_rate=3e-4,
     buffer_size=1_000_000,
@@ -57,14 +59,30 @@ eval_callback = EvalCallback(
     eval_env,
     best_model_save_path=log_dir,
     log_path=log_dir,
-    eval_freq=2500,
+    eval_freq=2000,
     deterministic=True,
     render=False,
 )
 
+class PnLCallBack(BaseCallback):
+    def __init__(self, writer, verbose: int = 0):
+        super().__init__(verbose)
+        self.writer = writer
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "episode_pnl" in info:
+                ep_pnl = info["episode_pnl"]
+                self.writer.add_scalar("ep_pnl", ep_pnl, self.num_timesteps)
+        return True
+
+pnl_writer = SummaryWriter(os.path.join(log_dir, "pnl"))
+pnl_callback = PnLCallBack(writer=pnl_writer)
+
 # train model
 print("Starting training...")
-model.learn(total_timesteps=75_000, callback=eval_callback, tb_log_name="SAC_Trading")
+model.learn(total_timesteps=100_000, callback=[eval_callback, pnl_callback], tb_log_name="SAC_Trading")
 print("Training complete.")
 
 # save model
