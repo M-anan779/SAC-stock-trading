@@ -65,12 +65,6 @@ class TechnicalIndicators:
             result[i] = count
         
         return pd.Series(result, index=series.index)
-    
-    def _add_candle_strength_features(self):
-        self.df['candle_strength'] = abs(self.df['close'] - self.df['open']) / (self.df['high'] - self.df['low']).replace(0.0, np.nan)
-        self.df['candle_strength'] = self.df['candle_strength'].replace(0.0, np.nan)
-        self.df['strength_against_prev'] = self.df['candle_strength'] / self.df['candle_strength'].shift(axis=0, periods=1)
-        self.df['price_efficiency'] = abs(self.df['close'] - self.df['open']) / self.df['volume']
 
     def _add_volume_zscore(self):
         rolling_mean = self.df['volume'].rolling(20).mean()
@@ -82,12 +76,31 @@ class TechnicalIndicators:
         rolling_std = self.df['close'].rolling(20).std()
         self.df['price_zscore'] = (self.df['close'] - rolling_mean) / rolling_std
 
+    def _add_candle_strength_features(self):
+        self.df['price_movement'] = (self.df['close'] - self.df['open'] / self.df['close'] - self.df['open'].shift(axis=0, periods=1).fillna(1)) - 1
+        self.df['price_efficiency'] = self.df['close'] - self.df['open'] / abs(self.df['volume_zscore'])
+
+    def _normalize(self):
+        self.df['time_since_reversal'] = (self.df['time_since_reversal'] / 78).clip(0,1)
+        
+        cols = ['DMI_dev', 'dev_delta', 'SMI_EMA_dev_delta', 'price_movement', 'price_efficiency']
+        rolling_mean = self.df[cols].shift(1).rolling(20).mean()
+        rolling_std = self.df[cols].shift(1).rolling(20).std(ddof=0)
+        eps = 1e-8
+        self.df[cols] = ((self.df[cols] - rolling_mean) / np.maximum(rolling_std, eps)).clip(-10, 10)
+        
+        cols.append('price_zscore')
+        cols.append('volume_zscore')
+        self.df[cols] = np.tanh(self.df[cols])
+        
+
     def generate_all_indicators(self):
         self._add_direction_acceleration_features()
         self._add_trend_confirmation_features()
-        self._add_candle_strength_features()
         self._add_volume_zscore()
         self._add_price_zscore()
         self._add_market_price()
+        self._add_candle_strength_features()
+        self._normalize()
 
         return self.df
