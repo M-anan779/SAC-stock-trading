@@ -9,7 +9,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.callbacks import BaseCallback
-from torch.utils.tensorboard import SummaryWriter 
+from torch.utils.tensorboard import SummaryWriter
 
 print(torch.cuda.get_device_name(0))        # check whether using GPU
 
@@ -42,8 +42,8 @@ model = SAC(
         net_arch=[256, 256, 256]        
     ),
     learning_rate=3e-4,
-    buffer_size=1_000_000,
-    batch_size=256,
+    buffer_size=50_000,
+    batch_size=128,
     train_freq=(1, 'step'), 
     gradient_steps=1,  
     gamma=0.99,
@@ -88,5 +88,6 @@ print("Training complete.")
 # save model
 model.save(os.path.join(log_dir, "sac_trading_env"))
 print(f"Model saved to {log_dir}")
+
 
 
