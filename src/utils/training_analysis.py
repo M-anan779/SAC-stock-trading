@@ -78,7 +78,7 @@ class Analyzer:
         return row
 
 # Usage
-file = Path('logs/trades-0823-1828.csv')
+file = Path('logs/trades-0825-0313.csv')
 analyzer = Analyzer(file)
 analyzer.get_summary()
 
