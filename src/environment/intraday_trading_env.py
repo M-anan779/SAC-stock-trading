@@ -17,18 +17,19 @@ class TradingEnv(gym.Env):
         super().__init__()
 
         # initialization
-        self.start_time = datetime.now().strftime('%m%d-%H%M')
+        self.start_time = datetime.now().strftime("%m%d-%H%M")
         self.current_step = 0
         self.global_step = 0
         self.current_episode = 0
         self.states = None 
-        self.window_size = 12
-        self.init_cash = 10000
+        self.window_size = 20
+        self.features = 10
+        self.init_cash = 25000
         
         # action and observation spaces
-        self.action_space = spaces.Box(low=-1, high=1, shape = (1, ), dtype = np.float64)
-        self.observation_space = spaces.Box(low=-1, high=1, shape = (self.window_size, 9), dtype = np.float64)
-        
+        self.action_space = spaces.Box(low=-1, high=1, shape = (1, ), dtype = np.float32)
+        self.observation_space = spaces.Box(low=-1, high=1, shape = (self.window_size, 10), dtype = np.float32)
+
         # meta vector index order (the vector contains state transition info produced by the env at a single timestep)
         self.avl_cash_idx = 0
         self.marketprice_idx = 1
@@ -37,12 +38,9 @@ class TradingEnv(gym.Env):
         self.pnl_idx = 4
         self.reward_idx = 5
 
-        self.meta_len = 6                           # increment by 1 if adding an index
-        self.flag_arr = []                          # since flags are strings they can't be added to the initial np array used to create meta
+        self.meta_len = 6                                                       # increment by 1 if adding an index
+        self.flag_arr = []                                                      # since flags are strings they can't be added to the initial np array used to create meta
         self.shares_arr = []
-
-        # dict to store min/max values used later for normalizing obs (min/max for each feature found in a unique ticker)
-        self.minmax_dict = {}
 
         # load ticker files and group episodes by date and ticker (each episode is a single trading day involving one ticker)
         self.ticker_file_paths = [f for f in data_dir.iterdir()]
@@ -50,19 +48,13 @@ class TradingEnv(gym.Env):
         for file in data_dir.iterdir():
             df = pd.read_csv(file)
             
-            # TEMP CODE: only trains on AAPL for now
-            if (df['ticker'].iloc[0] != 'AAPL'):
+            if df['ticker'].iloc[0] not in ['AAPL', 'MSFT']:
                 continue
-            
-            temp_df = df.drop(columns=['date', 'ticker'])
-            
-            minmax = {}
-            for col in temp_df.columns.tolist():
-                minmax[col] = (df[col].min(), df[col].max())
-            self.minmax_dict[file.stem] = minmax
             
             for _, group in df.groupby('date'):
                 self.episode_df_list.append(group)
+        
+        np.random.shuffle(self.episode_df_list)
 
     # reset() function, called once per start of new episode, required for gyms
     def reset(self, seed=None, options=None):
@@ -77,12 +69,17 @@ class TradingEnv(gym.Env):
         while True:
             self.states = []
             self.obs = []
-            self.current_episode = np.random.randint(0, len(self.episode_df_list))
+            if (self.current_episode == len(self.episode_df_list)):
+                self.current_episode = 0
+                np.random.shuffle(self.episode_df_list)
+
             self._window_helper(self.episode_df_list[self.current_episode])
-            if len(self.obs) > 15:
+            self.current_episode += 1
+            
+            if len(self.obs) > 20:
                 break
             print(f'[WARNING] Skipping empty episode index {self.current_episode}')
-        
+            
         # return normalized obs
         observation = self._get_obs(t)
         
@@ -95,8 +92,11 @@ class TradingEnv(gym.Env):
         # clean and store action
         action = np.clip(action, -1, 1)
         action = np.round(action, 1)
-        #action = abs(action)
+        if action >= -0.1 and action <= 0.1:
+            action = 0 
+
         self.states[t][self.action_idx] = action
+        self.obs[t][-1] = action                                                    # update obs to include current action (so that it is available for the next)
 
         # compute trade and retrieve reward
         self._trade_helper(t)
@@ -113,7 +113,7 @@ class TradingEnv(gym.Env):
         if t == len(self.states)-1:
             terminate = True
             meta_log_df = pd.DataFrame(self.states, columns=[
-                    'avl_cash', 'market_price', 'position_size', 'action', 'pnl', 'reward'
+                    'avl_cash', 'market_price', 'action', 'position_size', 'pnl', 'reward'
                 ])
             meta_log_df.insert(0, 'ticker', self.current_ep_ticker)
             meta_log_df.insert(0, 'date', self.current_ep_date)
@@ -139,38 +139,25 @@ class TradingEnv(gym.Env):
         
         # drop unnecessary info and normalize data
         episode_df = episode_df.drop(columns = ['date', 'ticker', 'market_price'])
-        normalized_group = self._normalize_df(episode_df, self.current_ep_ticker)
+        episode_df['p_size'] = 0
+        episode_df['action'] = 0
         
         # compute and store obs and meta (info) vector
         for i in range(len(episode_df) - self.window_size + 1):
-            obs_window = normalized_group.iloc[i:i+self.window_size].to_numpy(dtype=np.float64)
+            obs_window = episode_df.iloc[i:i+self.window_size]                          # 20 x 5 min candle obs with 8 + 2(below) features each
+            obs_window.to_numpy(dtype=np.float32) 
+            self.obs.append(obs_window)
 
-            meta = np.zeros(self.meta_len, dtype=np.float64)
+            meta = np.zeros(self.meta_len, dtype=np.float32)
             meta[self.avl_cash_idx] = self.init_cash 
-            meta[self.marketprice_idx] = market_price.iloc[i+self.window_size-1]  # price of last candle of current state where trades are taken
-            
+            meta[self.marketprice_idx] = market_price.iloc[i+self.window_size-1]        # price of last candle of current state where trades are taken
             self.flag_arr.append('H')
             self.shares_arr.append(0)
             self.states.append(meta)
-            self.obs.append(obs_window)
         
-        self.states = np.array(self.states, dtype=np.float64)       # info for logging
-        self.obs = np.array(self.obs, dtype=np.float64)             # obs for training 
-    
-    def _normalize_df(self, df, ticker):
-        # replace to tanh if also normalizing via rolling z score of featues (values should end up being between 3 and -3, i think, and tanh can squash this without losing detail)
-        df_normalized = df.copy() 
-        # min-max normalization per column for current episode
-        for col in df.columns.tolist():
-            if col == 'time_since_reversal':
-                df_normalized[col] = 2 * (df[col] / 78) - 1
-                df_normalized[col] = norm_col.clip(-1, 1)
-            else:
-                min, max = self.minmax_dict[ticker][col]
-                norm_col = 2 * ((df[col] - min) / (max - min)) - 1
-                df_normalized[col] = norm_col.clip(-1, 1)
-
-        return df_normalized
+        # np array containing np arrays
+        self.states = np.array(self.states, dtype=np.float32)                   # info for logging
+        self.obs = np.array(self.obs, dtype=np.float32)                         # obs for training 
 
     # returns the obs matrix at time step t
     def _get_obs(self, t):
@@ -183,48 +170,49 @@ class TradingEnv(gym.Env):
             pnl = self.states[t][self.pnl_idx]
             curr_action = self.states[t][self.action_idx]
             prev_action = self.states[t-1][self.action_idx]
-            target = 0.005 * self.init_cash      # profit target: 0.5% of portfolio value
-            
+            target = 0.005 * self.init_cash                         # profit target: 0.5% of portfolio value                          
+            scaled_cost = (0.0005 * self.init_cash) / target       # 0.05% of position size, used for slippage and fees              
             relative = pnl / target
 
             if curr_action == prev_action:
                 # holding no position
                 if curr_action == 0:
-                    reward = 0.0005
+                    reward = 0.075
                 
                 # holding same position (no change in delta_a)
-                elif curr_action == prev_action:
+                else:
                     if pnl > 0:
-                        reward += relative   
+                        reward = relative * 1.25   
                     else:
                         if relative <= -1:
-                            reward += relative
+                            reward = relative * 1.5
                         else:
-                            reward += relative       
+                            reward = relative      
             else:
                 flag = self.flag_arr[t]
+                
                 # sold position
+                relative *= 2
                 if flag not in ['LB', 'SB']:
                     # profit
                     if pnl > 0:
-                        reward += relative
+                        reward = relative
                     # loss
                     else:
                         if relative <= -1:
-                            reward += relative
+                            reward = relative * 1.5 
                         else:
-                            reward += relative
+                            reward = relative
                     
-                    # slippage cost (interpreted as 0.05%, value is scaled by 10 at the end)
-                    #reward -= 0.00005 * (self.states[t][self.p_size_idx])
+                    # slippage cost
+                    reward -= scaled_cost
 
                 # bought position
                 else:
-                    # slippage cost (0.05% of current position size)
-                    #reward -= 0.00005 * (self.states[t][self.p_size_idx])
-                    reward = 0
-        
-        self.states[t][self.reward_idx] += reward
+                    # transaction cost 
+                    reward -= scaled_cost
+
+        self.states[t][self.reward_idx] += reward * 3
 
     def _trade_helper(self, t):
         action = self.states[t][self.action_idx]
@@ -237,25 +225,25 @@ class TradingEnv(gym.Env):
         if action == 0 and prev_action == 0:
             self.states[t][self.pnl_idx] = 0.0
             self.states[t][self.avl_cash_idx] = self.states[t-1][self.avl_cash_idx]
-            self.flag_arr[t] = 'H'
+            flag = 'H'
 
         # determine whether action is 'buy short position (SB)' or 'sell short position (SS)'
         elif action <= 0 and prev_action <= 0:
             if action <= prev_action:
                 self._buy(action, prev_action, 'SB', t, reversal=False)
-                self.flag_arr[t] = 'SB'
+                flag = 'SB'
             elif action > prev_action:
                 self._sell(action, prev_action, 'SS', t)
-                self.flag_arr[t] = 'SS'
+                flag = 'SS'
 
         # determine whether action is 'sell long position (LS)' or 'buy long position (LB)'
         elif action >= 0 and prev_action >= 0:
             if action < prev_action:
                 self._sell(action, prev_action, 'LS', t)
-                self.flag_arr[t] = 'LS'
+                flag = 'LS'
             elif action >= prev_action:
                 self._buy(action, prev_action, 'LB', t, reversal=False)
-                self.flag_arr[t] = 'LB'
+                flag = 'LB'
 
         # determine whether action is 'short reversal-> sell short position + buy new long position' 
         # or 'long reversal-> sell long position + buy new short position'
@@ -264,13 +252,14 @@ class TradingEnv(gym.Env):
                 self._sell(0, prev_action, 'SS', t)
                 self._calculate_reward(t)                                                          # additional call is necessary for reversals since it's technically two trading actions
                 self._buy(action, 0, 'LB', t, reversal=True)
-                self.flag_arr[t] = 'SR'
+                flag = 'SR'
             else:
                 self._sell(0, prev_action, 'LS', t)
                 self._calculate_reward(t)
                 self._buy(action, 0, 'SB', t, reversal=True)
-                self.flag_arr[t] = 'LR'
+                flag = 'LR'
         
+        self.flag_arr[t] = flag
         # compute reward for step()
         self._calculate_reward(t)
         
@@ -280,6 +269,8 @@ class TradingEnv(gym.Env):
         delta_a = action - prev_action                                                             # change in action (delta) used to determine shares for a position
         market_price = self.states[t][self.marketprice_idx]
         
+        current_size = 0
+        multiplier = 1
 
         if delta_a != 0:
             pnl = 0
@@ -287,19 +278,24 @@ class TradingEnv(gym.Env):
                 # if this operation is part of second leg of reversal, then use the current timestep instead to access info for calculations  
                 avl_cash = self.states[t][self.avl_cash_idx]
                 prev_shares = 0
+                prev_size = 0
             else:
                 # else initialize as normal
                 avl_cash = self.states[prev_t][self.avl_cash_idx]
                 prev_shares = int(self.shares_arr[prev_t])
+                prev_size = self.states[prev_t][self.p_size_idx]
 
             # calculate shares and pnl
-            if flag == 'LB':                                                                            # buy long position
+            if flag == 'LB':                                                                                            # buy long position
                 new_shares, position_size = self.positions.add_position(abs(delta_a), 'L', market_price)
                 current_shares = prev_shares + new_shares
+                current_size = prev_size + position_size 
 
-            elif flag == 'SB':                                                                          # buy short position
+            elif flag == 'SB':                                                                                          # buy short position
                 new_shares, position_size = self.positions.add_position(abs(delta_a), 'S', market_price)
-                current_shares = prev_shares - new_shares                        
+                current_shares = prev_shares - new_shares
+                current_size = prev_size - position_size
+                multiplier = -1                        
             
             avl_cash -= position_size
         
@@ -310,24 +306,32 @@ class TradingEnv(gym.Env):
         self.states[t][self.pnl_idx] += pnl
         self.states[t][self.avl_cash_idx] = avl_cash
         self.shares_arr[t] = int(current_shares)
-        self.states[t][self.p_size_idx] = position_size
+        self.obs[t][-2] = current_size / self.init_cash * multiplier                                                   # multiplier helps distinguish between long and short (negative) 
+        self.states[t][self.p_size_idx] = current_size
 
     def _sell(self, action, prev_action, flag, t):
-        prev_t = self._check_index(t)                                                               # check t == 0 and corrects t if it is
+        prev_t = self._check_index(t)                                                           # check t == 0 and corrects t if it is
         
         delta_a = action - prev_action
         market_price = self.states[t][self.marketprice_idx]
         avl_cash = self.states[prev_t][self.avl_cash_idx]
         prev_shares = int(self.shares_arr[prev_t])
+        prev_size = self.states[prev_t][self.p_size_idx]
+
+        current_size = 0
+        multiplier = 1
 
         # calculate shares and pnl
         if flag == 'LS':                                                                            
             new_shares, pnl, position_size = self.positions.sell_position(abs(delta_a), 'L', market_price)
             current_shares = prev_shares - new_shares
+            current_size = prev_size - position_size
 
         elif flag == 'SS':
-            new_shares, pnl, position_size = self.positions.sell_position(abs(delta_a), 'S', market_price)      # positive shares are returned by helper
+            new_shares, pnl, position_size = self.positions.sell_position(abs(delta_a), 'S', market_price)          # helper returns positive shares
             current_shares = prev_shares + new_shares
+            current_size = prev_size + position_size
+            multiplier = -1
         
         # update position size and avl_cash
         avl_cash += position_size
@@ -336,7 +340,8 @@ class TradingEnv(gym.Env):
         self.states[t][self.pnl_idx] += pnl
         self.states[t][self.avl_cash_idx] = avl_cash
         self.shares_arr[t] = int(current_shares)
-        self.states[t][self.p_size_idx] = position_size
+        self.obs[t][-2] = (current_size / self.init_cash) * multiplier                                             # multiplier helps distinguish between long and short (negative)
+        self.states[t][self.p_size_idx] = current_size
     
     # helper for t == 0 edge case (out of bounds error at start of new episode)
     def _check_index(self, t):
