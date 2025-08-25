@@ -26,7 +26,7 @@ print(f"Observation shape: {obs.shape}, dtype: {obs.dtype}")
 print(f"Action space: {env.action_space}, Obs space: {env.observation_space}")
 
 # wrap in VecEnv for SB3
-vec_env = make_vec_env(lambda: Monitor(TradingEnv()), n_envs=1)
+vec_env = make_vec_env(lambda: Monitor(TradingEnv()), n_envs=14)
 
 # SAC model setup
 log_dir = os.path.join("logs", datetime.now().strftime("%m%d-%H%M"))
@@ -41,25 +41,28 @@ model = SAC(
         activation_fn=nn.Tanh,     
         net_arch=[256, 256, 256]        
     ),
-    learning_rate=3e-4,
-    buffer_size=50_000,
-    batch_size=128,
-    train_freq=(1, 'step'), 
-    gradient_steps=1,  
+    learning_rate=2e-4,
+    buffer_size=1_000_000,
+    batch_size=2048,
+    learning_starts=100_000,
+    train_freq=1, 
+    gradient_steps=4,  
     gamma=0.99,
     tau=0.005,
-    ent_coef=0.05,
+    use_sde=True,
+    sde_sample_freq = 30,
+    target_entropy= -1.2,
+    ent_coef='auto',
 )
 
 # evaluation callback
-eval_env = TradingEnv()
-eval_env = Monitor(eval_env)
+eval_env = Monitor(TradingEnv())
 
 eval_callback = EvalCallback(
     eval_env,
     best_model_save_path=log_dir,
     log_path=log_dir,
-    eval_freq=2000,
+    eval_freq=25000,
     deterministic=True,
     render=False,
 )
@@ -82,7 +85,7 @@ pnl_callback = PnLCallBack(writer=pnl_writer)
 
 # train model
 print("Starting training...")
-model.learn(total_timesteps=100_000, callback=[eval_callback, pnl_callback], tb_log_name="SAC_Trading")
+model.learn(total_timesteps=500_000, callback=[eval_callback, pnl_callback], tb_log_name="SAC_Trading")
 print("Training complete.")
 
 # save model
