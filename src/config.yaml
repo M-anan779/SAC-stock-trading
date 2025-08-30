@@ -1,0 +1,20 @@
+training_dir: "data/training_sets_5-minute"
+
+validation_dir: "data/validation_sets_5-minute"
+
+valid_tickers: [
+                    "NVDA", "TSLA", "INTC", "AAPL", "AMZN", "GOOGL", "AMD", "AVGO", "MSFT",
+                    "MRVL", "CSCO", "MU", "META", "SHOP", "QCOM", "MCHP", "ON",
+                    "PYPL", "CRM", "ADBE", "NFLX"
+                ]
+
+training_runs:
+  training_7:
+      - tickers: 
+          - AMD 
+          - NVDA 
+        timesteps: 660000
+      - tickers: 
+          - AMZN  
+        timesteps: 330000
+      
