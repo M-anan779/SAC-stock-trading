@@ -67,22 +67,16 @@ def fetch_ticker_data(ticker_name, dir_path, multiplier, timespan):
     file_path = dir_path / Path(f'{ticker_name}.csv')
     df.to_csv(file_path, index=False)
 
-def run():
+def run(tickers):
     multiplier = '5'
     timespan = 'minute'
     output_dir = Path(f'data/raw_tickers_{multiplier}-{timespan}')
     
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    TICKERS = [
-        'NVDA', 'TSLA', 'INTC', 'AAPL', 'AMZN', 'GOOGL', 'AMD', 'AVGO', 'MSFT',
-        'MRVL', 'CSCO', 'MU', 'META', 'SHOP', 'QCOM', 'MCHP', 'ON',
-        'PYPL', 'CRM', 'ADBE', 'NFLX'
-    ]
 
     partial_function = partial(fetch_ticker_data, dir_path=output_dir, multiplier=multiplier, timespan=timespan)
     with ProcessPoolExecutor(max_workers=8) as executor:
-        list(executor.map(partial_function, TICKERS))
+        list(executor.map(partial_function, tickers))
     
 if __name__ == '__main__':
     run()
