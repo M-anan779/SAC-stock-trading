@@ -1,6 +1,6 @@
 # Deep Reinforcement Learning for Intraday Stock Trading
 
-This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom environment**. The SAC implementation is handled in **Stable-Baselines3**.
+This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom environment**. The SAC implementation is handled by **Stable-Baselines3**.
 
 The pipeline performs several actions to faciliate this goal, including:
 * Data preprocessing
