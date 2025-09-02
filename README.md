@@ -172,4 +172,3 @@ Quitting...
 * Modify the neural network architecture by swapping the MLP for a TCN feature extractor
 * Experiment with feature generation to further improve cross ticker generalization
 * Change CLI (`run.py`) to be able to directly edit `config.yaml` for "train" and "fetch data" actions
-* Add name of tickers used for validation when printing performance stats in `Analyzer`
