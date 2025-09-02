@@ -65,8 +65,8 @@ The pipeline performs several actions to faciliate this goal, including:
 ## Installation
 
 ```
-git clone https://github.com/M-anan779/sac-trading-bot.git
-cd sac-trading-bot
+git clone https://github.com/M-anan779/SAC-stock-trading.git
+cd SAC-stock-trading
 pip install -r requirements.txt
 ```
 
