@@ -1,0 +1,15 @@
+# Data processing
+numpy
+pandas
+pandas-ta
+
+# DRL
+torch
+stable-baselines3
+gymnasium
+
+# Logging
+tensorboard
+
+# Data fetching
+requests
