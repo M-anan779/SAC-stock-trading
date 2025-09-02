@@ -4,11 +4,10 @@ This project implements a complete end-to-end **deep reinforcement learning (DRL
 
 The pipeline performs several actions to faciliate this goal, including:
 * Data preprocessing
-* Training and validation (custom gym)
-* Tensorboard and CSV logging
-* Computing performance metrics
-
-## 
+* Training 
+* Validation
+* Logging figures
+* Computing performance stats
 
 ---
 
