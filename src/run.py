@@ -77,15 +77,16 @@ def run_analysis():
     # compute performance stats
     csv_path = Path(f"{model_dir}/{csv_name}")
     analyzer = Analyzer(csv_path)
-    print(f"Running analysis using {csv_path}")
+    print(f"Running analysis using '{csv_path}'...")
     analyzer.get_summary()
 
 # validates saved models by loading validation set data by selecting tickers and providing the total number of timesteps to validate the model over 
 def run_validation(config):
+    
     # helper to get user input to load a model
     model_dir, save_name = _model_select_helper()
     model_path = Path(f"{model_dir}/{save_name}")
-    valid_tickers = config["valid_tickers"]
+    valid_tickers = config["tickers"]
     
     # store user input to create the list of tickers to use for validation data
     tickers = []
@@ -104,45 +105,47 @@ def run_validation(config):
         
         # cancel
         if user_input == i:
-            print("Cancelling...")
+            print("\nCancelling...")
             break
 
         # restart
         elif user_input == i+1:
             tickers = []
-            print("Restarting process...")
+            print("\nRestarting process...")
             continue
 
         # confirm/continue 
         elif user_input == i+2:
             if len(tickers) > 0:
-                print(f"Proceeding with selection: {tickers}")
+                print(f"\nProceeding with selection: {tickers}")
                 validate(model_path, config["validation_dir"], tickers, steps)
                 break
 
             # edge case no tickers selected
             else:
                 tickers = []
-                print(f"No tickers were selected...")
+                print(f"\nNo tickers were selected...")
                 continue
         
         # add selected ticker to list
         else:
-            ticker = config["valid_tickers"][user_input]
+            ticker = config["tickers"][user_input]
             if ticker not in tickers:
-                print(f"Adding ticker: {ticker}")
+                print(f"\nAdding ticker: {ticker}")
                 tickers.append(ticker)
                 print(f"Current selection: {tickers}")
             
             #edge case duplication selection
             else:
-                print(f"Ticker '{ticker}' has already been selected. Try again...")
+                print(f"\nTicker '{ticker}' has already been selected. Try again...")
                 print(f"Current selection: {tickers}")
                 continue
 
 # trains new/saved models by running training splits defined as passing {ticker, timesteps} to the environment
 def run_training(config):
-    print("0 - new model")
+    
+    # print options
+    print("\n0 - new model")
     print("1 - saved model")
     prompt = "Select which model to train: "
     user_input = int(_get_input(prompt, 2))
@@ -167,12 +170,12 @@ def run_training(config):
         for index, split in enumerate(splits):
             print(f"        split_{index}: {split}")
         i += 1
-    print(f"{i} - cancel")
+    print(f"{i} - cancel\n")
     prompt = "Select index for training run: "
     user_input = int(_get_input(prompt, i+1))
 
     run = runs[user_input]
-    print(f"starting run labelled: {run}")
+    print(f"starting run labelled: {run}\n")
     train(splits, config["training_dir"], model_path)
 
 def main():
@@ -182,7 +185,7 @@ def main():
     while (True):
 
         # print main menu
-        print("0 - train")
+        print("\n0 - train")
         print("1 - validate")
         print("2 - analyse")
         print("3 - fetch data")
@@ -195,7 +198,7 @@ def main():
         match user_input:
             # train new models
             case 0:
-                print("Running train...")
+                print("Running train...\n")
                 run_training(config)
 
             # validate saved models
@@ -208,17 +211,17 @@ def main():
             
             # fetch data from polygon api
             case 3:
-                print("Fetching data...")
-                fetch(config["valid_tickers"])
+                print("Fetching data...\n")
+                fetch(config)
             
             # data enrichment to compute features
             case 4:
-                print("Computing features...")
-                enrich()
+                print("Computing features...\n")
+                enrich(config)
             
             # exit program
             case 5:
-                print("Quitting...")
+                print("Quitting...\n")
                 return
 
 if __name__ == '__main__':

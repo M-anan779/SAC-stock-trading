@@ -1,13 +1,23 @@
-training_dir: "data/training_sets_5-minute"
+# data_ingestion.py parameters
+multiplier: '5'
+timespan: 'minute'
+start_date: "2015-08-01"
+end_date: "2025-07-01"
 
+# data directories
+input_dir: "data/raw_tickers_5-minute"
+processed_dir: "data/processed_sets_5-minute"
+training_dir: "data/training_sets_5-minute"
 validation_dir: "data/validation_sets_5-minute"
 
-valid_tickers: [
+# list of tickers in use
+tickers: [
                     "NVDA", "TSLA", "INTC", "AAPL", "AMZN", "GOOGL", "AMD", "AVGO", "MSFT",
                     "MRVL", "CSCO", "MU", "META", "SHOP", "QCOM", "MCHP", "ON",
                     "PYPL", "CRM", "ADBE", "NFLX"
                 ]
 
+# training splits for train.py
 training_runs:
   training_7:
       - tickers: 

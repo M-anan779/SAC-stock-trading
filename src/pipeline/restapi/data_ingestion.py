@@ -5,12 +5,10 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
-def fetch_ticker_data(ticker_name, dir_path, multiplier, timespan):
+def fetch_ticker_data(ticker_name, dir_path, multiplier, timespan, start_date, end_date):
     api_key = "tuelfP7BndxIOjsQ3FeBz6bqyHpRXuFJ"
     rows = []
 
-    start_date = "2015-08-01"
-    end_date = "2025-07-01"
     dates = pd.date_range(start=start_date, end=end_date, freq="2MS")
 
     print(f"Requesting data from polygon: {ticker_name}, {multiplier}-{timespan}")
@@ -31,7 +29,7 @@ def fetch_ticker_data(ticker_name, dir_path, multiplier, timespan):
 
                 data = response.json()
                 if "error" in data or data.get("status") == "ERROR":
-                    print(f"[{ticker_name}] Polygon error on {current_date}: {data.get('error', 'Unknown')} → retrying...")
+                    print(f"[{ticker_name}] Polygon error on {current_date}: {data.get("error", "Unknown")} → retrying...")
                     time.sleep(2 * (attempt + 1))
                     continue
 
@@ -61,24 +59,27 @@ def fetch_ticker_data(ticker_name, dir_path, multiplier, timespan):
     print(f"Finished processing: {ticker_name}, Total: {len(rows)} candles")
 
     df = pd.DataFrame(rows)
-    df['t'] = pd.to_datetime(df['t'], unit='ms')
-    df.rename(columns={'t': 'timestamp', 'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close', 'v': 'volume'}, inplace=True)
-    df = df.set_index("timestamp").between_time('09:30', '15:55').reset_index()
-    file_path = dir_path / Path(f'{ticker_name}.csv')
+    df["t"] = pd.to_datetime(df["t"], unit="ms")
+    df.rename(columns={"t": "timestamp", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}, inplace=True)
+    df = df.set_index("timestamp").between_time("09:30", "15:55").reset_index()
+    file_path = dir_path / Path(f"{ticker_name}.csv")
     df.to_csv(file_path, index=False)
 
-def run(tickers):
-    multiplier = '5'
-    timespan = 'minute'
-    output_dir = Path(f'data/raw_tickers_{multiplier}-{timespan}')
+def run(config):
+    tickers = config["tickers"]
+    multiplier = config["multiplier"]
+    timespan = config["timespan"]
+    start_date = config["start_date"]
+    end_date = config["end_date"]
+    output_dir = Path(f"data/raw_tickers_{multiplier}-{timespan}")
     
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    partial_function = partial(fetch_ticker_data, dir_path=output_dir, multiplier=multiplier, timespan=timespan)
+    partial_function = partial(fetch_ticker_data, dir_path=output_dir, multiplier=multiplier, timespan=timespan, start_date=start_date, end_date=end_date)
     with ProcessPoolExecutor(max_workers=8) as executor:
         list(executor.map(partial_function, tickers))
     
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()
 
 

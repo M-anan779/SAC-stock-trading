@@ -43,10 +43,10 @@ def validate(model_path, val_dir, tickers, eval_steps):
         if timesteps % 10000 == 0:
             prev_time = current_time
             current_time = time.time()
-            print(f"Finished {timesteps} steps of evaluation, total time elapsed: {round(current_time - start_time, 3)} seconds, time taken: {round(current_time - prev_time, 3)} seconds")  
+            print(f"\nFinished {timesteps} steps of evaluation, total time elapsed: {round(current_time - start_time, 3)} seconds, time taken: {round(current_time - prev_time, 3)} seconds")  
     
     # compute stats from environment/trading auxiliary info csv file created after validation run
-    print(f"Validation completed({eval_steps}), outputting stats...")
+    print(f"\nValidation completed({eval_steps}), outputting stats...")
     csv_path = f"{model_path}-validation-{num}.csv"
     analyzer = Analyzer(csv_path)
     analyzer.get_summary()

@@ -11,6 +11,7 @@ class Analyzer:
     # main method for printing all computed stats. rounded to 3 decimals
     def get_summary(self):
         summary = self._get_trading_stats(self.log_df)
+        print("\nPerformance Stats:")
         for key in summary:
             print(f'{key}: {round(summary[key], 3)}')
 
