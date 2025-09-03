@@ -21,19 +21,22 @@ class Analyzer:
         episode_df = episode_df[['flag', 'pnl', 'avl_cash', 'date']]
         buy_series = episode_df[episode_df['flag'].isin(['LB', 'SB'])].drop(columns=['flag'])
         sell_series = episode_df[episode_df['flag'].isin(['LS', 'SS'])].drop(columns=['flag'])
-        hold_series = episode_df[episode_df['flag'] == 'H'].drop(columns=['flag'])
+        no_position_series = episode_df[episode_df['flag'] == 'NP'].drop(columns=['flag'])
+        hold_position_series = episode_df[episode_df['flag'] == 'HP'].drop(columns=['flag'])
         total_years = episode_df.groupby('date').ngroups / 260
 
         # action counts
         buy_count = len(buy_series)
         sell_count = len(sell_series)
-        hold_count = len(hold_series)
-        total_count = sell_count + buy_count + hold_count
+        no_position_count = len(no_position_series)
+        hold_position_count = len(hold_position_series)
+        total_count = sell_count + buy_count + no_position_count + hold_position_count
         
         # action % rates
         buy_rate = buy_count / total_count
         sell_rate = sell_count / total_count
-        hold_rate = hold_count / total_count
+        hold_position_rate = hold_position_count / total_count
+        no_position_rate = no_position_count / total_count
 
         profit_series = sell_series[sell_series['pnl'] > 0]
         loss_series = sell_series[sell_series['pnl'] < 0]
@@ -57,8 +60,7 @@ class Analyzer:
         winlose_total = win_count + lose_count
         win_rate = win_count / winlose_total
         lose_rate = lose_count / winlose_total
-        winlose_ratio = win_count/lose_count
-        avg_pl_ratio = profit_avg / abs(loss_avg)
+        pl_ratio = profit_avg / abs(loss_avg)
         
         # misc. stats
         pnl_per_year = pnl_total / total_years
@@ -66,27 +68,31 @@ class Analyzer:
 
         # compute final dict for all stats
         dict = {
-            'buy_count':            float(buy_count),
-            'sell_count':           float(sell_count),
-            'hold_count':           float(hold_count),
-            'buy_rate':             float(buy_rate),
-            'sell_rate':            float(sell_rate),
-            'hold_rate':            float(hold_rate),
-            'profit_total':         float(profit_total),
-            'loss_total':           float(loss_total),
-            'pnl_total':            float(pnl_total),
-            'profit_avg':           float(profit_avg),
-            'loss_avg':             float(loss_avg),
-            'profit_max':           float(profit_max),
-            'loss_max':             float(loss_max),
-            'win_count':            float(win_count),
-            'lose_count':           float(lose_count),
-            'win_rate':             float(win_rate),
-            'lose_rate':            float(lose_rate),
-            'winlose_ratio':        float(winlose_ratio),
-            'avg_pl_ratio':         float(avg_pl_ratio),
-            'pnl_per_year':         float(pnl_per_year),
-            'expected_value':       float(expected_value)
+            'buy count':                    float(buy_count),
+            'sell count':                   float(sell_count),
+            'hold position count':          float(hold_position_count),
+            'no position count':            float(no_position_count),
+            'win_count':                    float(win_count),
+            'lose_count':                   float(lose_count),
+            
+            'buy rate':                     float(buy_rate),
+            'sell rate':                    float(sell_rate),
+            'hold rate':                    float(hold_position_rate),
+            'no position rate':             float(no_position_rate),
+            'win_rate':                     float(win_rate),
+            'lose_rate':                    float(lose_rate),
+            
+            'profit_total':                 float(profit_total),
+            'loss_total':                   float(loss_total),
+            'pnl_total':                    float(pnl_total),
+            'profit_max':                   float(profit_max),
+            'loss_max':                     float(loss_max),
+            'profit_avg':                   float(profit_avg),
+            'loss_avg':                     float(loss_avg),
+            'pl_ratio':                     float(pl_ratio),
+            
+            'pnl_per_year':                 float(pnl_per_year),
+            'expected_value':               float(expected_value)
         }
 
         return dict
