@@ -1,14 +1,13 @@
 # Deep Reinforcement Learning for Intraday Stock Trading
 
-This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom environment**. The SAC implementation is handled in **Stable-Baselines3**.
+This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom environment**. The SAC implementation is handled by **Stable-Baselines3**.
 
 The pipeline performs several actions to faciliate this goal, including:
 * Data preprocessing
-* Training and validation (custom gym)
-* Tensorboard and CSV logging
-* Computing performance metrics
-
-## 
+* Training 
+* Validation
+* Logging figures
+* Computing performance stats
 
 ---
 
@@ -17,28 +16,28 @@ The pipeline performs several actions to faciliate this goal, including:
 * **Data Pipeline** (`data_enrichment.py`, `data_ingestion.py`)
   * **Raw data ingestion** from [Polygon.io](https://polygon.io) stocks endpoint API (past 10 years, multiple stock tickers)
   * **Preprocessing** raw data (price + volume data) to compute technical indicator data
-  * **Feature engineering** statistical features from these computed technical indicators
-  * **Normalization** of data using tanh squashing
-  * Splitting data into **training + validation sets**
+  * **Feature engineering** statistical features from these computed technical indicators to produce the final observations data
+  * **Normalization** of obs data using tanh squashing
+  * Splitting obs data into **training + validation sets**
     
 * **Custom Gym environment** (`intraday_trading_env.py`)
-  * `TradingEnv` (Gymnasium API) compliant training environment
+  * **Gym API** compliant training environment compatibale with Stable-Baselines3
   * Simulates **realistic broker/trading logic** from interpreting SAC's continuous action space
-  * Outputs a rolling window of 12 candles as observations (represent the flow of market data)
+  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 12 features
   * Allows for **trading both short and long positions**
-  * Keeps track of different positions and pnl of active positions
-  * Implements necessary financial accounting involved in trading (portfolio cash, available cash, short positions, shares, Pnl, etc.) 
+  * Keeps track of different positions and PnL of active positions
+  * Implements the necessary financial accounting logic involved in stock trading (portfolio cash, available cash, short positions, shares, Pnl, etc.) 
   * **Custom reward logic** (computes varying rewards for different types of trading actions)
   * **CSV logging** of agent trading activity and environment states (position type, position size, position value, reward, etc.)
   * **Tensorboard logging** of SB3 training logs (actor, critic losses, reward, etc.) and a moving average of total PnL at every episode end
 
 * **Training** (`training.py`)
-  * Define a base model in SB3 to train (algorithm name, layers, hyperparameters, training parameters)
+  * Define a base model in SB3 to train (algorithm name, layers, hyperparameters, training parameters, etc.)
   * Run different user defined training splits from `config.yaml`
   * Save model and allow for continuing training later
    
 * **Validation** (`validation.py`)
-  * Deterministic validation runs of saved models
+  * Deterministic validation runs of saved models on unseen data
   * Select ticker data to validate on and number of steps 
   * Uses a separate validation set of data for the specified ticker(s) (data range: 2023 - 2025)
 
@@ -172,4 +171,3 @@ Quitting...
 * Modify the neural network architecture by swapping the MLP for a TCN feature extractor
 * Experiment with feature generation to further improve cross ticker generalization
 * Change CLI (`run.py`) to be able to directly edit `config.yaml` for "train" and "fetch data" actions
-* Add name of tickers used for validation when printing performance stats in `Analyzer`
