@@ -19,12 +19,10 @@ tickers: [
 
 # training splits for train.py
 training_runs:
-  training_7:
+  training_1:
       - tickers: 
           - AMD 
-          - NVDA 
-        timesteps: 660000
-      - tickers: 
-          - AMZN  
-        timesteps: 330000
+          - NVDA
+          - INTC 
+        timesteps: 640000
       
