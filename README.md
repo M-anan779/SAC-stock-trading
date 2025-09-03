@@ -1,6 +1,7 @@
 # Deep Reinforcement Learning for Intraday Stock Trading
 
-This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom environment**. The SAC implementation is handled by **Stable-Baselines3**.
+This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom gym environment**. 
+The base SAC implementation is handled by **Stable-Baselines3** but has been modified to use a **Temporal Convolutional Network (TCN)** as the feature extractor rather than an MLP. Since it is better suited for learning time series data.
 
 The pipeline performs several actions to faciliate this goal, including:
 * Data preprocessing
@@ -23,7 +24,7 @@ The pipeline performs several actions to faciliate this goal, including:
 * **Custom Gym environment** (`intraday_trading_env.py`)
   * **Gym API** compliant training environment compatibale with Stable-Baselines3
   * Simulates **realistic broker/trading logic** from interpreting SAC's continuous action space
-  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 12 features
+  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 11 features
   * Allows for **trading both short and long positions**
   * Keeps track of different positions and PnL of active positions
   * Implements the necessary financial accounting logic involved in stock trading (portfolio cash, available cash, short positions, shares, Pnl, etc.) 
@@ -168,6 +169,6 @@ Quitting...
 ---
 
 ## Future developments
-* Modify the neural network architecture by swapping the MLP for a TCN feature extractor
+* Fine tune TCN architecture
 * Experiment with feature generation to further improve cross ticker generalization
 * Change CLI (`run.py`) to be able to directly edit `config.yaml` for "train" and "fetch data" actions
