@@ -1,7 +1,6 @@
 import os
 import gymnasium as gym
 import torch
-import torch.nn as nn
 from datetime import datetime
 from stable_baselines3 import SAC
 from environment.intraday_trading_env import TradingEnv
@@ -9,6 +8,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from torch.utils.tensorboard import SummaryWriter
+from model_arch.tcn import TCN
 
 print(torch.cuda.get_device_name(0))        # check whether using GPU
 
@@ -51,7 +51,6 @@ def train(splits, train_dir, model_path):
 
     model = None
     
-    
     # load model from some previous save
     if model_path is not None:
         dummy_env = make_vec_env(lambda: Monitor(TradingEnv(data_dir=train_dir, tickers=["AAPL"], model_path=model_path, validation=False, num="_", steps=100)), n_envs=12)             # just to initialize models at the start
@@ -66,16 +65,18 @@ def train(splits, train_dir, model_path):
             env=dummy_env,
             verbose=1,
             tensorboard_log=log_dir,
-            policy_kwargs=dict(
-                activation_fn=nn.Tanh,
-                net_arch=[256, 256, 256]
+            policy_kwargs = dict(
+                features_extractor_class=TCN,
+                features_extractor_kwargs=dict(features_dim=64),
+                net_arch=dict(pi=[], qf=[]),
+                share_features_extractor=False              
             ),
-            learning_rate=2e-4,
+            learning_rate=3e-4,
             buffer_size=1_000_000,
-            batch_size=2048,
+            batch_size=1024,
             learning_starts=25_000,
             train_freq=1,
-            gradient_steps=4,
+            gradient_steps=3,
             gamma=0.99,
             tau=0.005,
             use_sde=True,
