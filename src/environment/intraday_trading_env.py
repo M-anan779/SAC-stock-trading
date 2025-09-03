@@ -320,25 +320,21 @@ class TradingEnv(gym.Env):
         if action == 0 and prev_action == 0:
             self.states[t][self.pnl_idx] = 0.0
             self.states[t][self.avl_cash_idx] = self.states[t-1][self.avl_cash_idx]
-            flag = 'H'
+            self.flag_arr[t] = 'NP'
 
         # determine whether action is 'buy short position (SB)' or 'sell short position (SS)'
         elif action <= 0 and prev_action <= 0:
             if action <= prev_action:
                 self._buy(action, prev_action, 'SB', t, reversal=False)
-                flag = 'SB'
             elif action > prev_action:
                 self._sell(action, prev_action, 'SS', t)
-                flag = 'SS'
 
         # determine whether action is 'sell long position (LS)' or 'buy long position (LB)'
         elif action >= 0 and prev_action >= 0:
             if action < prev_action:
                 self._sell(action, prev_action, 'LS', t)
-                flag = 'LS'
             elif action >= prev_action:
                 self._buy(action, prev_action, 'LB', t, reversal=False)
-                flag = 'LB'
 
         # determine whether action is 'short reversal-> sell short position + buy new long position' 
         # or 'long reversal-> sell long position + buy new short position'
@@ -347,14 +343,12 @@ class TradingEnv(gym.Env):
                 self._sell(0, prev_action, 'SS', t)
                 self._calculate_reward(t)                                                          # additional call is necessary for reversals since it's technically two trading actions
                 self._buy(action, 0, 'LB', t, reversal=True)
-                flag = 'SR'
+                self.flag_arr[t] = 'SR'
             else:
                 self._sell(0, prev_action, 'LS', t)
                 self._calculate_reward(t)
                 self._buy(action, 0, 'SB', t, reversal=True)
-                flag = 'LR'
-        
-        self.flag_arr[t] = flag
+                self.flag_arr[t] = 'LR'
         
         # compute reward for step()
         self._calculate_reward(t)
@@ -400,6 +394,7 @@ class TradingEnv(gym.Env):
         else:
             current_shares, future_pnl, position_size = self.positions.hold_position(market_price, future_price)
             avl_cash = self.states[prev_t][self.avl_cash_idx]
+            flag = 'HP'
         
         # update info
         if t+1 < len(self.states) - 1:
@@ -407,6 +402,7 @@ class TradingEnv(gym.Env):
         self.states[t][self.avl_cash_idx] = avl_cash
         self.shares_arr[t] = int(current_shares)                                                                   
         self.states[t][self.psize_idx] = current_size
+        self.flag_arr[t] = flag
 
     def _sell(self, action, prev_action, flag, t):
         prev_t = self._check_index(t)                                                           # check t == 0 and corrects t if it is
@@ -440,6 +436,7 @@ class TradingEnv(gym.Env):
         self.states[t][self.avl_cash_idx] = avl_cash
         self.shares_arr[t] = int(current_shares)
         self.states[t][self.psize_idx] = current_size
+        self.flag_arr[t] = flag
     
     # helper for t == 0 edge case (out of bounds error at start of new episode)
     def _check_index(self, t):
