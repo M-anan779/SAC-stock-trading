@@ -27,7 +27,7 @@ def _model_select_helper():
     log_dir = Path("logs/")
     log_ids = []
 
-    print("training runs: ")
+    print("\ntraining runs: ")
     for i, log_id in enumerate(os.listdir(log_dir)):
         log_ids.append(log_id)
         print(f"{i} - {log_id}")
@@ -41,6 +41,7 @@ def _model_select_helper():
     # select saved model
     model_saves = []
     j = 0
+    print("\nModel saves: ")
     for save_name in os.listdir(model_dir):
         if save_name.endswith(".zip"):
             save_name = os.path.splitext(save_name)[0]
@@ -63,6 +64,8 @@ def run_analysis():
     # get user input to load csv
     csv_files = []
     j = 0
+
+    print("\nCSV logs: ")
     for file in os.listdir(model_dir):
         if file.endswith(".csv"):
             if save_name in file and ("validation" in file or "training" in file):
@@ -77,7 +80,7 @@ def run_analysis():
     # compute performance stats
     csv_path = Path(f"{model_dir}/{csv_name}")
     analyzer = Analyzer(csv_path)
-    print(f"Running analysis using '{csv_path}'...")
+    print(f"\nRunning analysis using '{csv_path}'...")
     analyzer.get_summary()
 
 # validates saved models by loading validation set data by selecting tickers and providing the total number of timesteps to validate the model over 
@@ -90,8 +93,9 @@ def run_validation(config):
     
     # store user input to create the list of tickers to use for validation data
     tickers = []
-    steps = int(input("Enter number of evaluation steps: "))
+    steps = int(input("\nEnter number of evaluation steps: "))
     i = 0
+    print("\nTickers: ")
     for ticker in valid_tickers:
         print(f"{i} - {ticker}")
         i+=1
@@ -145,38 +149,42 @@ def run_validation(config):
 def run_training(config):
     
     # print options
-    print("\n0 - new model")
+    print("0 - new model")
     print("1 - saved model")
-    prompt = "Select which model to train: "
+    prompt = "Select training option: "
     user_input = int(_get_input(prompt, 2))
 
     match user_input:
         # train a new model
         case 0:
             model_path = None
-            print("Train new model, loading training splits from config file.")
+            print("\nNew model will be trained...")
         
         # train a saved model further
         case 1:
-            print("Train saved model, loading training splits from config file.")
             model_dir, save_name = _model_select_helper()
             model_path = Path(f"{model_dir}/{save_name}")
+            print(f"\n{save_name} from {model_dir} will be trained...")
     
     i = 0
     runs = []
+    print("\nTraining splits: ")
     for run, splits in config["training_runs"].items():
         runs.append(run)
         print(f"{i} - {run}:")
         for index, split in enumerate(splits):
-            print(f"        split_{index}: {split}")
+            print(f"                    split_{index}: {split}")
         i += 1
     print(f"{i} - cancel\n")
-    prompt = "Select index for training run: "
+    prompt = "Select training run: "
     user_input = int(_get_input(prompt, i+1))
-
-    run = runs[user_input]
-    print(f"starting run labelled: {run}\n")
-    train(splits, config["training_dir"], model_path)
+    if user_input == i:
+        print("\nCancelling...")
+        return
+    else:
+        run = runs[user_input]
+        print(f"\nstarting run labelled: {run}")
+        train(splits, config["training_dir"], model_path)
 
 def main():
     with open("src/config.yaml", "r") as f:
@@ -198,7 +206,7 @@ def main():
         match user_input:
             # train new models
             case 0:
-                print("Running train...\n")
+                print("\nTraining:")
                 run_training(config)
 
             # validate saved models
@@ -211,18 +219,18 @@ def main():
             
             # fetch data from polygon api
             case 3:
-                print("Fetching data...\n")
+                print("\nFetching data...")
                 fetch(config)
             
             # data enrichment to compute features
             case 4:
-                print("Computing features...\n")
+                print("\nComputing features...")
                 enrich(config)
             
             # exit program
             case 5:
-                print("Quitting...\n")
+                print("\nQuitting...")
                 return
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
