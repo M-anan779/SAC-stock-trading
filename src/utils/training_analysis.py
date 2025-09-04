@@ -21,7 +21,7 @@ class Analyzer:
     # compute all stats
     def _get_trading_stats(self, episode_df):
         # filter data from csv
-        episode_df = episode_df[["flag", "pnl", "avl_cash", "date", "ticker"]]
+        episode_df = episode_df[["flag", "realized_pnl", "avl_cash", "date", "ticker"]]
         buy_series = episode_df[episode_df["flag"].isin(["LB", "SB"])].drop(columns=["flag"])
         sell_series = episode_df[episode_df["flag"].isin(["LS", "SS"])].drop(columns=["flag"])
         no_position_series = episode_df[episode_df["flag"] == "NP"].drop(columns=["flag"])
@@ -42,21 +42,21 @@ class Analyzer:
         hold_position_rate = hold_position_count / total_count
         no_position_rate = no_position_count / total_count
 
-        profit_series = sell_series[sell_series["pnl"] > 0]
-        loss_series = sell_series[sell_series["pnl"] < 0]
+        profit_series = sell_series[sell_series["realized_pnl"] > 0]
+        loss_series = sell_series[sell_series["realized_pnl"] < 0]
 
         # profit/loss totals
-        profit_total = profit_series["pnl"].sum()
-        loss_total = loss_series["pnl"].sum()
+        profit_total = profit_series["realized_pnl"].sum()
+        loss_total = loss_series["realized_pnl"].sum()
         pnl_total = profit_total - abs(loss_total)
 
         # profit/loss avg
-        profit_avg = profit_series["pnl"].mean()
-        loss_avg = loss_series["pnl"].mean()
+        profit_avg = profit_series["realized_pnl"].mean()
+        loss_avg = loss_series["realized_pnl"].mean()
 
         # maximums
-        profit_max = profit_series["pnl"].max()
-        loss_max = loss_series["pnl"].min()
+        profit_max = profit_series["realized_pnl"].max()
+        loss_max = loss_series["realized_pnl"].min()
 
         #win/loss stats
         win_count = len(profit_series)
