@@ -24,7 +24,7 @@ The pipeline performs several actions to faciliate this goal, including:
 * **Custom Gym environment** (`intraday_trading_env.py`)
   * **Gym API** compliant training environment compatibale with Stable-Baselines3
   * Simulates **realistic broker/trading logic** from interpreting SAC's continuous action space
-  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 11 features
+  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 10 features
   * Allows for **trading both short and long positions**
   * Keeps track of different positions and PnL of active positions
   * Implements the necessary financial accounting logic involved in stock trading (portfolio cash, available cash, short positions, shares, Pnl, etc.) 
