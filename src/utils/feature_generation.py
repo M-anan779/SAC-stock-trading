@@ -34,21 +34,25 @@ class TechnicalIndicators:
         K_length = 10
         D_length = 3
         ema_length = 3
+        eps = 1e-8
 
-        highest_high = self.df["high"].rolling(K_length).max()    # nan filled later
+        highest_high = self.df["high"].rolling(K_length).max()
         lowest_low = self.df["low"].rolling(K_length).min()
         highlow_range = highest_high - lowest_low
         relative_range = self.df["close"] - (highest_high + lowest_low) / 2
 
         smooth_relative_range = ta.ema(ta.ema(relative_range, D_length), D_length)
         smooth_highlow_range = ta.ema(ta.ema(highlow_range, D_length), D_length)
-        smi = 200 * (smooth_relative_range / smooth_highlow_range)
+        smi = 200 * (smooth_relative_range / (smooth_highlow_range.replace(0, eps) + eps))
 
-        self.df["time_since_reversal"] = self._time_since_reversal_helper(series=smi, upper_thresh=40, lower_thresh=-40)
-        
+        self.df["time_since_reversal"] = self._time_since_reversal_helper(
+            series=smi, upper_thresh=40, lower_thresh=-40
+        )
+
         smi_dev = smi - ta.ema(smi, ema_length)
         smi_ema_dev_delta = smi_dev - smi_dev.shift(axis=0, periods=1).fillna(0)
         self.df["SMI_EMA_dev_delta"] = smi_ema_dev_delta
+
     
     @staticmethod
     def _time_since_reversal_helper(series, upper_thresh, lower_thresh):
@@ -67,18 +71,30 @@ class TechnicalIndicators:
         return pd.Series(result, index=series.index)
 
     def _add_volume_zscore(self):
-        rolling_mean = self.df["volume"].rolling(20).mean()
-        rolling_std = self.df["volume"].rolling(20).std()
-        self.df["volume_zscore"] = (self.df["volume"] - rolling_mean) / rolling_std
+        rolling_mean = self.df["volume"].rolling(20).mean()        
+        rolling_std  = self.df["volume"].rolling(20).std(ddof=0)
+        self.df["volume_zscore"] = (self.df["volume"] - rolling_mean) / (rolling_std.replace(0, 1e-8))
+
     
     def _add_price_zscore(self):
         rolling_mean = self.df["close"].rolling(20).mean()
-        rolling_std = self.df["close"].rolling(20).std()
+        rolling_std = self.df["close"].rolling(20).std(ddof=0)
         self.df["price_zscore"] = (self.df["close"] - rolling_mean) / rolling_std
 
     def _add_candle_strength_features(self):
-        self.df["price_movement"] = (self.df["close"] - self.df["open"] / self.df["close"] - self.df["open"].shift(axis=0, periods=1).fillna(1)) - 1
-        self.df["price_efficiency"] = self.df["close"] - self.df["open"] / abs(self.df["volume_zscore"])
+        eps = 1e-8
+        true_range = (self.df["high"] - self.df["low"]).replace(0, eps)  # True range per bar
+        body = self.df["close"] - self.df["open"]
+        upper_wick = self.df["high"] - self.df[["open","close"]].max(axis=1)
+        lower_wick = self.df[["open","close"]].min(axis=1) - self.df["low"]
+
+        # candle body size normalized by range
+        self.df["price_movement"] = (body / true_range).clip(-5, 5)
+
+        # quantifies the strength of the candle movement
+        self.df["price_efficiency"] = ((upper_wick - lower_wick) / true_range).clip(-5, 5)
+
+
 
     def _normalize(self):
         self.df["time_since_reversal"] = (self.df["time_since_reversal"] / 78).clip(0,1)
