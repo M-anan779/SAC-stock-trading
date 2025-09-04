@@ -157,15 +157,13 @@ def run_training(config):
     match user_input:
         # train a new model
         case 0:
-            model_path = None
-            load_save = False
+            load_path = None
             print("\nNew model will be trained...")
         
         # train a saved model further
         case 1:
             model_dir, save_name = _model_select_helper()
-            model_path = Path(f"{model_dir}/{save_name}")
-            load_save = True
+            load_path = Path(f"{model_dir}/{save_name}")
             print(f"\n{save_name} from {model_dir} will be trained...")
     
     i = 0
@@ -188,7 +186,7 @@ def run_training(config):
         run = f"{runs[user_input]}"
         splits = config["training_splits"][f"{run}"]
         print(f"\nStarting run labelled: {run}")
-        train(splits, config["training_dir"], model_path, load_save)
+        train(splits, config["training_dir"], load_path)
 
 def main():
     with open("src/config.yaml", "r") as f:
