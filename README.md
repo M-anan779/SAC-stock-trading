@@ -179,7 +179,7 @@ The raw data set is requested from Polygon.io by the pipeline, requests are limi
   * Tickers: Any stock listed on the US market. I selected roughly 20 stock picks from the NASDAQ100 based on volume and volatility metrics (example beta < 1.8)
   * Time frame: Such as 5-minute, 1-day etc. For this project I used 5-minute data as this balances between noise and presenting strong intraday price movements.
 
-After preprocessing of the data as well, this results in about 150k-200k data points per individual stock. Giving me well over potentially 2.4 million state transitions that can be used for training.  
+After preprocessing of the raa data as well, this results in about 150k-200k data points per individual stock. Giving well over **2.4 million state transitions** that could be used for training.
 
 ### Goal
 The goal for the agent is to be able to learn to trade multiple tickers through some level of **cross ticker generalization**. Since real world data is limited, training on one ticker will not produce enough timesteps to learn such a complex task through DRL and not using enough varied data will most definately lead to overfitting.
