@@ -182,9 +182,9 @@ The raw data set is requested from Polygon.io by the pipeline, requests are limi
 After preprocessing of the data as well, this results in about 150k-200k data points per individual stock. Giving me well over potentially 2.4 million state transitions that can be used for training.  
 
 ### Goal
-The goal for the agent is to be able to learn to trade multiple tickers through some level of cross ticker generalization. Since real world data is limited, training on one ticker will not produce enough timesteps to learn such a complex task through DRL, and not using enough varied data will most definately lead to overfitting.
+The goal for the agent is to be able to learn to trade multiple tickers through some level of **cross ticker generalization**. Since real world data is limited, training on one ticker will not produce enough timesteps to learn such a complex task through DRL and not using enough varied data will most definately lead to overfitting.
 
-As a result, my goal is to design the environment (obs, reward) and model architecture such that it is able to generalize learning across tickers and therefore benefit productively from being trained across different tickers and market regimes. 
+As a result, my goal is to design the environment (`obs, reward`) and model architecture such that it is able to generalize learning across tickers and therefore benefit productively from being **trained across different tickers and market regimes**.
 
 ### Observation Space
 
