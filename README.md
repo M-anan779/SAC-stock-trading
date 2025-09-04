@@ -70,19 +70,6 @@ cd SAC-stock-trading
 pip install -r requirements.txt
 ````
 
-**Set your Polygon API key:**
-
-* macOS/Linux:
-
-  ```bash
-  export POLYGON_API_KEY="your_key_here"
-  ```
-* Windows (PowerShell):
-
-  ```powershell
-  setx POLYGON_API_KEY "your_key_here"
-  ```
-
 **Required Python packages:**
 
 * `torch`, `stable-baselines3`, `gymnasium`, `tensorboard`
