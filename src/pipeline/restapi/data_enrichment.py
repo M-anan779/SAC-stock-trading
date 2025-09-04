@@ -12,8 +12,11 @@ def compute_features(file, csv_dtypes, processed_dir, training_dir, validation_d
     ti = TechnicalIndicators(ticker_df)
     ticker_df = ti.generate_all_indicators().reset_index().dropna()
 
-    date_series = pd.to_datetime(ticker_df["timestamp"]).dt.date
+    dt_series = pd.to_datetime(ticker_df["timestamp"])
+    date_series = dt_series.dt.date
+    time_series = dt_series.dt.time
 
+    ticker_df.insert(0, "time", time_series)
     ticker_df.insert(0, "date", date_series)
     ticker_df.insert(0, "ticker", file.stem)
     ticker_df = ticker_df.drop(columns=["timestamp", "open", "high", "low", "close", "volume"])
