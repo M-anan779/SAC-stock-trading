@@ -171,7 +171,8 @@ Quitting...
 ## Expanded Details
 I thought I would talk a bit more about the lower level details of the project.
 
-**Data Pipeline**
+###**Data Pipeline**
+
 The data pipeline has two parts:
 * data_ingestion.py: fetches data from Polygon.io
 * data_enrichment.py: transforms raw data into better features
@@ -184,7 +185,8 @@ The rest endpoint responds with JSON to requests and this object contains the ra
 
 After this point the data needs to be preprocessed. data_enrichment.py does some basic pandas operations to accomplish this, but the main work is done by **feature_generation.py**. The class here computes custom features made from transforming raw technical indicator data (which itself is computed using pandas_ta over the raw OHLCV data). Normalization happens here as well, most features are z score normalized while a few use a different technique specific to that feature. Since some of these features will be unbounded due to z scores, and so tanh is used to squash the value between -1 and 1. This is suitable for the tanh activation function that is used by each layer in the neural network. 
 
-**Custom Gym**
+###**Custom Gym**
+
 The gym is defined with an observation space that essentially has a 2D matrix shape. This is because the obs are a rolling window of size n over size m features, N x M. Currently this is 12 x 10, meaning 12 timesteps with each timestep being a vector of 10 features. The "rolling" window just means that the next state/obs is made of the the 1st till 12th index, meanwhile the previous was 0th till 11th. Each rolling window contains N - 1 previous candles and only 1 new "present" candle. This behaviour mimics how humans view the time series when trading. 
 
 12 timesteps with 5 minute candles equates to 1 hour of trading time. This is essentially the exact amount I want the agent to be able to "see" or consider when it's making a trading decision. 1 hour is the general rule when doing intraday trading on the 5 minute timeframe, and so this number felt appropriate given the timeframe. Each episode is a single day involving a single ticker, and so upon initialization the gym precomputes the ticker-day episodes that are needed for a run (every defined training run can use any combination of tickers)
