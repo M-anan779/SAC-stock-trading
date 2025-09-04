@@ -18,11 +18,49 @@ tickers: [
                 ]
 
 # training splits for train.py
-training_runs:
+training_splits:
   training_1:
       - tickers: 
           - AMD 
           - NVDA
           - INTC 
         timesteps: 640000
+  
+  training_2:
+      - tickers: 
+          - AMD 
+        timesteps: 240000
+
+  training_3:
+      - tickers: 
+          - NVDA
+        timesteps: 210000
+
+  training_4:
+      - tickers: 
+          - INTC 
+        timesteps: 200000
+  
+  training_6:
+      - tickers: 
+          - AMD 
+        timesteps: 240000
+
+      - tickers: 
+          - NVDA
+        timesteps: 210000
+  
+  training_7:
+      - tickers: 
+          - AMD 
+        timesteps: 240000
+
+      - tickers: 
+          - NVDA
+        timesteps: 210000
+
+      - tickers: 
+          - INTC 
+        timesteps: 200000
+  
       
