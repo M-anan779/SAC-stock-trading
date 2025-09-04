@@ -22,13 +22,13 @@ class TCN(BaseFeaturesExtractor):
         # TCN with 3 convolutional layers, layer normalization and tanh as activation function
         self.tcn = nn.Sequential(
             
-            causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=3), 
+            causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
             
-            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=3), 
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
             
-            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=3), 
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh()
         )
 
