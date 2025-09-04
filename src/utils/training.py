@@ -44,17 +44,15 @@ class PnLCallBack(BaseCallback):
 
         return True
 
-def train(splits, train_dir, model_path, load_save):
+def train(splits, train_dir, load_path):
     log_id = datetime.now().strftime("%m%d-%H%M")
     log_dir = os.path.join("logs", log_id)
     os.makedirs(log_dir, exist_ok=True)
-
     model = None
-    if load_save == False:
-        model_path = os.path.join(log_dir, f"model_0")
     
     # train model iteratively through each split (curriculum)
     for split_count, split in enumerate(splits):
+        model_path = os.path.join(log_dir, f"model_{split_count}")
         tickers = split["tickers"]
         timesteps = split["timesteps"]
         print(f"Starting split_{split_count}: {tickers}, {timesteps} steps\n")
@@ -66,15 +64,15 @@ def train(splits, train_dir, model_path, load_save):
         
         # load model from previous split in same training run (train the same model iteratively through various splits)
         if split_count >= 1:
-            model_path = os.path.join(log_dir, f"model_{split_count}")
+            
             model = SAC.load(os.path.join(log_dir, f"model_{split_count-1}"), env=train_env)
             model.learning_starts = 0
         
         # first iteration
         else:
             # load model from some previous save
-            if load_save:       
-                model = SAC.load(model_path, env=train_env)
+            if load_path is not None:      
+                model = SAC.load(load_path, env=train_env)
             
             # load base model
             else:           
