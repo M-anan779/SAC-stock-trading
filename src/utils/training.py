@@ -44,64 +44,65 @@ class PnLCallBack(BaseCallback):
 
         return True
 
-def train(splits, train_dir, model_path):
+def train(splits, train_dir, model_path, load_save):
     log_id = datetime.now().strftime("%m%d-%H%M")
     log_dir = os.path.join("logs", log_id)
     os.makedirs(log_dir, exist_ok=True)
 
     model = None
-    
-    # load model from some previous save
-    if model_path is not None:
-        dummy_env = make_vec_env(lambda: Monitor(TradingEnv(data_dir=train_dir, tickers=["AAPL"], model_path=model_path, validation=False, num="_", steps=100)), n_envs=12)             # just to initialize models at the start
-        model = SAC.load(model_path, env=dummy_env)
-    
-    # load base model
-    else:
+    if load_save == False:
         model_path = os.path.join(log_dir, f"model_0")
-        dummy_env = make_vec_env(lambda: Monitor(TradingEnv(data_dir=train_dir, tickers=["AAPL"], model_path=model_path, validation=False, num="_", steps=100)), n_envs=12)            
-        model = SAC(
-            policy="MlpPolicy",
-            env=dummy_env,
-            verbose=1,
-            tensorboard_log=log_dir,
-            policy_kwargs = dict(
-                features_extractor_class=TCN,
-                features_extractor_kwargs=dict(features_dim=64),
-                net_arch=dict(pi=[], qf=[]),
-                share_features_extractor=False              
-            ),
-            learning_rate=3e-4,
-            buffer_size=1_000_000,
-            batch_size=1024,
-            learning_starts=25_000,
-            train_freq=1,
-            gradient_steps=3,
-            gamma=0.99,
-            tau=0.005,
-            use_sde=True,
-            sde_sample_freq=30,
-            target_entropy=-1.2,
-            ent_coef="auto",
-        )
-        
+    
     # train model iteratively through each split (curriculum)
     for split_count, split in enumerate(splits):
+        tickers = split["tickers"]
+        timesteps = split["timesteps"]
+        print(f"Starting split_{split_count}: {tickers}, {timesteps} steps\n")
+        
+        # initialize training environtment, tensorboard and env callback logging
+        train_env = make_vec_env(lambda: Monitor(TradingEnv(train_dir, tickers, model_path, validation=False, num="_", steps=timesteps)), n_envs=12)
+        pnl_writer = SummaryWriter(f"{model_path}-pnl_ma")
+        pnl_callback = PnLCallBack(writer=pnl_writer, ma_window=5)
         
         # load model from previous split in same training run (train the same model iteratively through various splits)
         if split_count >= 1:
             model_path = os.path.join(log_dir, f"model_{split_count}")
             model = SAC.load(os.path.join(log_dir, f"model_{split_count-1}"), env=train_env)
             model.learning_starts = 0
-
-        tickers = split["tickers"]
-        timesteps = split["timesteps"]
-        print(f"starting split_{split_count}: {tickers}, {timesteps} steps")
         
-        # initialize training environtment, tensorboard and env callback logging
-        train_env = make_vec_env(lambda: Monitor(TradingEnv(train_dir, tickers, model_path, validation=False, num="_", steps=timesteps)), n_envs=12)
-        pnl_writer = SummaryWriter(f"{model_path}-pnl_ma")
-        pnl_callback = PnLCallBack(writer=pnl_writer, ma_window=5)
+        # first iteration
+        else:
+            # load model from some previous save
+            if load_save:       
+                model = SAC.load(model_path, env=train_env)
+            
+            # load base model
+            else:           
+                model = SAC(
+                    policy="MlpPolicy",
+                    env=train_env,
+                    verbose=1,
+                    tensorboard_log=log_dir,
+                    policy_kwargs = dict(
+                        features_extractor_class=TCN,
+                        features_extractor_kwargs=dict(features_dim=32),
+                        net_arch=dict(pi=[], qf=[32, 32]),
+                        activation_fn=torch.nn.Tanh,
+                        share_features_extractor=False              
+                    ),
+                    learning_rate=3e-4,
+                    buffer_size=1_000_000,
+                    batch_size=512,
+                    learning_starts=25_000,
+                    train_freq=1,
+                    gradient_steps=4,
+                    gamma=0.99,
+                    tau=0.005,
+                    use_sde=True,
+                    sde_sample_freq=20,
+                    target_entropy=-0.5,
+                    ent_coef="auto",
+                )
         
         # begin model training and save
         model.learn(total_timesteps=timesteps, callback=pnl_callback, tb_log_name=f"model_{split_count}-learning")
