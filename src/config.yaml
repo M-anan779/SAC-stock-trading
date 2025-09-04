@@ -6,7 +6,6 @@ end_date: "2025-07-01"
 
 # data directories
 input_dir: "data/raw_tickers_5-minute"
-processed_dir: "data/processed_sets_5-minute"
 training_dir: "data/training_sets_5-minute"
 validation_dir: "data/validation_sets_5-minute"
 
