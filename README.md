@@ -1,13 +1,13 @@
 # Deep Reinforcement Learning for Intraday Stock Trading
 
-This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom gym environment**. 
-The base SAC implementation is handled by **Stable-Baselines3** but has been modified to use a **Temporal Convolutional Network (TCN)** as the feature extractor rather than an MLP. Since it is better suited for learning time series data.
+This project implements a complete end-to-end **deep reinforcement learning (DRL) pipeline** for training stock trading agents using the **Soft Actor-Critic (SAC)** algorithm in a **custom gym environment**.  
+The base SAC implementation is handled by **Stable-Baselines3**, but it is modified to use a **Temporal Convolutional Network (TCN)** as the feature extractor rather than an MLP. Since it’s better suited to time-series data.
 
-The pipeline performs several actions to faciliate this goal, including:
+The pipeline performs several actions to facilitate this goal, including:
 * Data preprocessing
 * Training 
 * Validation
-* Logging figures
+* Logging
 * Computing performance stats
 
 ---
@@ -15,62 +15,62 @@ The pipeline performs several actions to faciliate this goal, including:
 ## Features
 
 * **Data Pipeline** (`data_enrichment.py`, `data_ingestion.py`)
-  * **Raw data ingestion** from [Polygon.io](https://polygon.io) stocks endpoint API (past 10 years, multiple stock tickers)
-  * **Preprocessing** raw data (price + volume data) to compute technical indicator data
-  * **Feature engineering** statistical features from these computed technical indicators to produce the final observations data
-  * **Normalization** of obs data using tanh squashing
-  * Splitting obs data into **training + validation sets**
+  * **Raw data ingestion** from [Polygon.io](https://polygon.io) (past 10 years, multiple stock tickers)
+  * **Preprocessing** raw OHLCV data to compute technical indicators
+  * **Feature engineering** statistical features from these indicators to produce the final observations
+  * **Normalization** of observations using tanh squashing
+  * Splitting data into **training + validation sets**
     
-* **Custom Gym environment** (`intraday_trading_env.py`)
-  * **Gym API** compliant training environment compatibale with Stable-Baselines3
-  * Simulates **realistic broker/trading logic** from interpreting SAC's continuous action space
-  * Outputs a rolling window of 12 candles as observations (represent the flow of market data), with each candle being represented by 11 features
-  * Allows for **trading both short and long positions**
-  * Keeps track of different positions and PnL of active positions
-  * Implements the necessary financial accounting logic involved in stock trading (portfolio cash, available cash, short positions, shares, Pnl, etc.) 
-  * **Custom reward logic** (computes varying rewards for different types of trading actions)
-  * **CSV logging** of agent trading activity and environment states (position type, position size, position value, reward, etc.)
-  * **Tensorboard logging** of SB3 training logs (actor, critic losses, reward, etc.) and a moving average of total PnL at every episode end
+* **Custom Gym Environment** (`intraday_trading_env.py`)
+  * **Gym API**–compatible training environment for Stable-Baselines3
+  * Simulates **realistic broker/trading logic** from interpreting SAC’s continuous action space
+  * Outputs a rolling window of 12 candles as observations (flow of market data), with each candle represented by 10 features
+  * Allows **both short and long positions**
+  * Tracks positions and PnL of active positions
+  * Implements financial accounting (portfolio cash, available cash, short positions, shares, PnL, etc.)
+  * **Custom reward logic** (varied rewards for different trading states)
+  * **CSV logging** of agent activity and environment state (position type/size/value, reward, etc.)
+  * **TensorBoard logging** of SB3 metrics (actor/critic losses, reward, etc.) plus a moving average of total PnL at episode end
 
 * **Training** (`training.py`)
-  * Define a base model in SB3 to train (algorithm name, layers, hyperparameters, training parameters, etc.)
-  * Run different user defined training splits from `config.yaml`
-  * Save model and allow for continuing training later
+  * Define a base SB3 model (algorithm, layers, hyperparameters, training params)
+  * Run user-defined training splits from `config.yaml`
+  * Save model and continue training later
    
 * **Validation** (`validation.py`)
   * Deterministic validation runs of saved models on unseen data
-  * Select ticker data to validate on and number of steps 
-  * Uses a separate validation set of data for the specified ticker(s) (data range: 2023 - 2025)
+  * Select ticker(s) and number of steps 
+  * Uses a held-out validation set (data range: 2023–2025)
 
 * **Analysis** (`training_analysis.py`)
   * Outputs performance stats such as win/loss rate, PnL ratio, expected value, etc.
-  * Uses the CSV logs produced by the environment during training/validation runs
-  
-* **Parallelization and other Optimizations**
-  * **Multi-processing** for data ingestion and enrichment
-  * **Vectorized pandas operations** for efficient DataFrame usage where possible
-  * **Vec-env** used during training to maximize GPU utilization and speed up training
-  * Buffered CSV logging and numpy arrays used in the environment
+  * Uses the CSV logs produced by the environment during training/validation
+
+* **Parallelization and Other Optimizations**
+  * **Multiprocessing** for data ingestion and enrichment
+  * **Vectorized pandas operations** where possible
+  * **VecEnv** during training to maximize GPU utilization and speed
+  * Buffered CSV logging and NumPy arrays in the environment
   
 * **CLI** (`run.py`)
-  * Makes it easier to run these functions individually
+  * Run individual functions easily
  
 **Additional Notes:** 
-  * `config.yaml` needs to be edited manually for defining some information like training runs and validation tickers
-  * polygon API key is required to run data ingestion and fetch data
-  * files under `old_flatfile/` are deprecated and not used currently (was part of early development when csv flatfile downloads contained data).
+  * `config.yaml` is edited manually to define training runs and validation tickers
+  * A Polygon API key is required to fetch data
+  * Files under `old_flatfile/` are deprecated (from early CSV-based development)
 
 ---
 
 ## Installation
 
-```
+```bash
 git clone https://github.com/M-anan779/SAC-stock-trading.git
 cd SAC-stock-trading
 pip install -r requirements.txt
-```
+````
 
-Required Python packages:
+**Required Python packages:**
 
 * `torch`, `stable-baselines3`, `gymnasium`, `tensorboard`
 * `numpy`, `pandas`, `pandas-ta`
@@ -82,7 +82,7 @@ Required Python packages:
 
 Run the CLI:
 
-```
+```bash
 python src/run.py
 ```
 
@@ -96,12 +96,11 @@ Main options:
 4 - generate features
 5 - quit
 Select action: 2
-
 ```
 
-Depending on the selected option, you will either get further prompts to select further options or the program will run using the information it finds in the `config.yaml` file.
+Depending on the selection, you’ll either get further prompts or the program will run using values from `config.yaml`.
 
-Example of running analysis:
+**Example: running analysis**
 
 ```
 training runs: 
@@ -160,15 +159,97 @@ Quitting...
 ```
 
 ## Outputs
-* Under each `/logs/<run_id>/` directory (created for each unique training run at the project root):
+
+* Under each `/logs/<run_id>/` directory (created per training run):
+
   * Training logs and TensorBoard metrics
-  * Saved model (as `model_<split_num>.zip`)
-  * Agent trading CSV logs for training and validation (as `model_<split_num>-training-_.csv`, `*model_<split_num>-validation-<rand_num>*.csv` respectively)
+  * Saved model (`model_<split_num>.zip`)
+  * Agent trading CSV logs for training/validation (`model_<split_num>-training-_.csv`, `model_<split_num>-validation-<rand>.csv`)
 * In terminal:
+
   * Performance stats computed from the CSV files
+
 ---
 
-## Future developments
-* Fine tune TCN architecture
-* Experiment with feature generation to further improve cross ticker generalization
-* Change CLI (`run.py`) to be able to directly edit `config.yaml` for "train" and "fetch data" actions
+## Architecture and Design
+
+### Observation Space
+
+The **observation** space is a `[12, 10]` matrix representing a rolling window of 12 timesteps, each with a 10-feature vector. The 10 features encode an OHLCV “candle.”
+“Rolling window” means at time `t = 0` the indices are `[0, 11]` (inclusive), while at `t = 1` they are `[1, 12]`. Each window contains `N − 1` prior candles and one “current” candle. Using 5-minute data, a 12-step window covers \~1 hour, which is a practical context length for intraday trading.
+
+### Action Space
+
+The action is a single float in `[-1, 1]`. The environment interprets:
+
+* Magnitude as **position size** (% allocation)
+* Change vs. previous action as **direction** (buy/sell)
+
+This supports **long, short, and reversal** trades with variable sizes.
+Because trading is inherently discrete, a continuous action space can be noisy (e.g., failing to output exact 0 to flatten). To mitigate:
+
+* A **dead zone** maps a range around 0 to “no position”
+* Actions are **rounded to one decimal** (10% increments), which is sufficient granularity for sizing and reduces noise
+
+### Features
+
+The 10 features are computed by transforming technical-indicator outputs (derived from OHLCV) into custom **representations**.
+
+### Normalization
+
+Most features are **z-score normalized** (per feature); a few use feature-specific scaling (e.g., dividing a counter by window size). Since z-scores can be unbounded, **tanh** is used to squash values to `[-1, 1]`, which also aligns with the network’s **Tanh** activations.
+
+### Network Architecture
+
+The network uses a **TCN** as a feature extractor. The extractor is **not shared**: the actor and critic each have their own TCN so their gradients don’t interfere. One extractor learns representations suited to the policy, the other for the critic.
+
+The extractor has three `Conv1d` layers. Each uses 32 channels (except the first, whose input channels match the feature count, 10) and **kernel size = 5**, giving a receptive field that roughly covers the window. With only 12 timesteps, dilations aren’t necessary. After each conv:
+
+* `LayerNorm` with `[features_dim, timesteps]`
+* `Tanh` activation (preserves negative inputs that `ReLU` would zero)
+
+```python
+causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=5),
+nn.LayerNorm(normalized_shape=[features_dim, timesteps]),
+nn.Tanh(),
+```
+
+`causalConv1d` is a thin wrapper around `Conv1d` with left padding.
+
+We take the **last timestep** from the extractor output as a flat vector for the policy/critic heads.
+The **policy head** is linear (no hidden layers), while the **critic heads** use hidden layers (capturing nonlinearities). The critic MLP uses `Tanh` activations with two layers: 64 → 32.
+
+```
+policy_kwargs = dict(
+    features_extractor_class=TCN,
+    features_extractor_kwargs=dict(features_dim=32),
+    net_arch=dict(pi=[], qf=[64, 32]),
+    activation_fn=torch.nn.Tanh,
+    share_features_extractor=False
+)
+```
+
+### Model Parameters
+
+Current (Not heavily tuned):
+```
+learning_rate=3e-4,
+buffer_size=1_000_000,
+batch_size=512,
+learning_starts=25_000,
+train_freq=1,
+gradient_steps=4,
+gamma=0.99,
+tau=0.005,
+use_sde=True,
+sde_sample_freq=20,
+target_entropy=-0.5,
+ent_coef="auto",
+```
+
+## Future Developments
+
+* Fine-tune the TCN architecture
+* Experiment with feature generation to improve cross-ticker generalization
+* Update CLI (`run.py`) to directly edit `config.yaml` for “train” and “fetch data”
+
