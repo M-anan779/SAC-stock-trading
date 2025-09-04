@@ -158,40 +158,43 @@ def run_training(config):
         # train a new model
         case 0:
             model_path = None
+            load_save = False
             print("\nNew model will be trained...")
         
         # train a saved model further
         case 1:
             model_dir, save_name = _model_select_helper()
             model_path = Path(f"{model_dir}/{save_name}")
+            load_save = True
             print(f"\n{save_name} from {model_dir} will be trained...")
     
     i = 0
     runs = []
     print("\nTraining splits: ")
-    for run, splits in config["training_runs"].items():
+    for run, splits in config["training_splits"].items():
         runs.append(run)
         print(f"{i} - {run}:")
         for index, split in enumerate(splits):
             print(f"                    split_{index}: {split}")
         i += 1
     print(f"{i} - cancel\n")
+    
     prompt = "Select training run: "
     user_input = int(_get_input(prompt, i+1))
     if user_input == i:
         print("\nCancelling...")
         return
     else:
-        run = runs[user_input]
-        print(f"\nstarting run labelled: {run}")
-        train(splits, config["training_dir"], model_path)
+        run = f"{runs[user_input]}"
+        splits = config["training_splits"][f"{run}"]
+        print(f"\nStarting run labelled: {run}")
+        train(splits, config["training_dir"], model_path, load_save)
 
 def main():
     with open("src/config.yaml", "r") as f:
         config = yaml.safe_load(f) 
     
     while (True):
-
         # print main menu
         print("\n0 - train")
         print("1 - validate")
