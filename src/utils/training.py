@@ -84,7 +84,7 @@ def train(splits, train_dir, load_path):
                     policy_kwargs = dict(
                         features_extractor_class=TCN,
                         features_extractor_kwargs=dict(features_dim=32),
-                        net_arch=dict(pi=[], qf=[32, 32]),
+                        net_arch=dict(pi=[], qf=[64, 32]),
                         activation_fn=torch.nn.Tanh,
                         share_features_extractor=False              
                     ),
