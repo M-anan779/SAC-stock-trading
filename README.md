@@ -244,7 +244,7 @@ policy_kwargs = dict(
 
 ### Model Parameters
 
-Current (Not heavily tuned):
+Current model parameters which I found to work well:
 ```
 learning_rate=3e-4,
 buffer_size=1_000_000,
