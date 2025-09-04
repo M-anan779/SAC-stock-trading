@@ -168,36 +168,59 @@ Quitting...
   * Performance stats computed from the CSV files
 ---
 
-## Expanded Details
-I thought I would talk a bit more about the lower level details of the project.
+## Architecture and Design
 
-###**Data Pipeline**
+### Observation Space
+The observstion space is a `[12, 10]` matrix to represent a rolling window of size 12 timesteps with each timestep having a vector of size 10 features. The 10 features aim to encode a raw OHLCV candle (raw market data of the candle). By rolling window it means that timestep `t = 0` represents indices `[0, 11]` (inlcusive), while `t = 1` represents indices `[1, 12]`. Each timestep contains `N - 1` previous "candles" with the last one being the "latest" current candle. The market data being used for training is of the 5 min frequency and so a window size of 12 represents 1 hour of trading time, which is appropriate for intraday trading and finding relevant patterns. 
 
-The data pipeline has two parts:
-* data_ingestion.py: fetches data from Polygon.io
-* data_enrichment.py: transforms raw data into better features
+### Action Space
+The action space is one floating point value between `[-1, 1]` which is translated into trading actions by the environment. On it's own the envrionment can interpret this value to represent position sizing as a percentage. Meanwhile the change in the current action compared to the previous can represent direction. Which in turn can be interpreted as buying and selling. The environment can map the action to buying or selling: **long, short and reversal positons with different position sizes**. 
+However, since trading inherently is a domain with a discrete action space, the continuous action space can be quite noisy and output subpar behaviour; such as not being able to output 0 consistently to sell completely and stay out of market. As a result the action space has a "dead zone", a range of values that all map to 0 so as to make that output artifically more frequent (agent doesn't have to be as precise). Additionally, the action is rounded to one decimal so that more of the action space maps to the same 10% increments. This is necessary since less than 10-20% granular control for position sizing is meaningless in trading and just noise.
 
-The fetch part of the program can request data from any time range, any frequency of data (1 minute, 5 minute, etc.) and any selection of tickers, assuming you have a subscription to Polygon. I specifically chose to request data in the 5 minute frequency as this timeframe presents a sweet spot for intraday trading. Though I have also considered experimenting with 1 minute frequency to train a scalp trader. 
-For the time span I chose to get every piece of data that was available to me which was the past 10 years. Since my goal isn't just learning one ticker at a time, but rather learning some level of cross ticker generalization. This problem is quite complex and so it would naturally benefit from having as many timesteps of data as possible.
-For the tickers I selected roughly 20 or so which I filtered using the yahoo finance stock screener. The stock screener allowed me to fine tune my data selection to only include tickers that were likely to have stable patterns. These were high volume, moderate beta, large cap stocks listed on the nasdaq100. 
+### Features
+The 10 features in the observation space are computed from transforming raw technical indicator data into other custom representatoins. The techical indicator data itself is a tranformation of the raw OHLCV data. 
 
-The rest endpoint responds with JSON to requests and this object contains the raw candle data (open, high, low, close prices + volume) which is parsed and saved to a CSV file for each ticker. The pipeline uses multiprocessing to speed up the fetch by requesting, parsing and then saving to CSV for multiple tickers (8 in this case) at the same time. This speed up is necessary since the end result is millions of data points. 
+### Normalizaton
+Most features are **z score normalized** (per feature) while a few use a different technique specific to it (such as dividing by window size for a counter). Since some of these features will be unbounded due to z scores, tanh is used to squash the values between -1 and 1. This in paricular is also suitable for the tanh activation function that is used by each layer in the neural network. 
 
-After this point the data needs to be preprocessed. data_enrichment.py does some basic pandas operations to accomplish this, but the main work is done by **feature_generation.py**. The class here computes custom features made from transforming raw technical indicator data (which itself is computed using pandas_ta over the raw OHLCV data). Normalization happens here as well, most features are z score normalized while a few use a different technique specific to that feature. Since some of these features will be unbounded due to z scores, and so tanh is used to squash the value between -1 and 1. This is suitable for the tanh activation function that is used by each layer in the neural network. 
+### Network Architecture
+The network architecture is using a `TCN` as a **feature extractor**. The feature extractor is not shared and so the actor and the critic have their own `TCN`. This was desirable as now the policy and critic gradients do not interfere like they would if both gradients flowed through the same extractor. Theoretically it should also make learning better since one `TCN` specifically updates to encode features over the input for the actor, and the other specifically learns better encoding to suit the critic. 
 
-###**Custom Gym**
+The feature extractor is three `Conv1d` layers. Each layer has input and output channels set to 32 except for the first layer whos input channels matches the number of features in the input obs (10). The kernal size is 5 which leads to a receptive field that just about covers the whole obs window. Since the timesteps are small (12) there is no need to use dilated convolutions. Each layer has a `LayerNorm` right after with the same number of channels. Lastly, `Tanh` is used for the activation layer. `Tamh` is used since the 10 features of the input obs has negative values which `ReLU` would interpret as 0, killing signal. 
+```
+causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=5), 
+            nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
+```
+The `causalConv1d` here is just a wrapper class for the standard `Conv1d` but with padding on the left. 
 
-The gym is defined with an observation space that essentially has a 2D matrix shape. This is because the obs are a rolling window of size n over size m features, N x M. Currently this is 12 x 10, meaning 12 timesteps with each timestep being a vector of 10 features. The "rolling" window just means that the next state/obs is made of the the 1st till 12th index, meanwhile the previous was 0th till 11th. Each rolling window contains N - 1 previous candles and only 1 new "present" candle. This behaviour mimics how humans view the time series when trading. 
+The last timestep is taken from the output generated by the extractor to get a flat vector for the subsequent linear nets for the task specific heads for the policy and critic networks. The policy network uses a linear activation (no hidden layer) since it's job is quite simple and it's accuracy relies a lot more on the critics. The critic networks have a more complex and crucial job and so the critic networks have hidden layers on top of the extractor so that it can capture any nonlinearities present in the encoding. The hidden layer is the default linear net but with tanh as the activation function (to match the rest of the network). There are two layers here, one of size 64 and the other size 32. 
 
-12 timesteps with 5 minute candles equates to 1 hour of trading time. This is essentially the exact amount I want the agent to be able to "see" or consider when it's making a trading decision. 1 hour is the general rule when doing intraday trading on the 5 minute timeframe, and so this number felt appropriate given the timeframe. Each episode is a single day involving a single ticker, and so upon initialization the gym precomputes the ticker-day episodes that are needed for a run (every defined training run can use any combination of tickers)
+```
+policy_kwargs = dict(
+    features_extractor_class=TCN,
+    features_extractor_kwargs=dict(features_dim=32),
+    net_arch=dict(pi=[], qf=[64, 32]),
+    activation_fn=torch.nn.Tanh,
+    share_features_extractor=False              
+)
+```
 
-The action space meanwhile is just a singular float between -1 and 1. The action space is not complex at all for trading, even the continous action space proves to be bothersome for trading which in reality just has 3 discrete actions. The environment maps this float to taking certain trades, this is done by interpreting the float as portfolio allocation percentage. For example 0.2 would mean "buy long position with 20% of cash", similarly the negative can represent short positions and moving more towards one end could mean buying and regressing in the opposite direction could mean selling. For example 0.2 -> 0.3 means buy another 10% worth of shares at timestep 2. This way the environment is able to process long, short and reversal trades.
-
-However the issue is that the agent finds it difficult to stay out of the market (consistently output 0) or sell off the entire position (output 0 not 0.2) due to the continuous action space. A mildly effective fix for this was to map a higher portion of the action space to 0 (currently actions between -0.4 and 0.4 map to 0) and rounding the float to one decimal place (so that the actions jump in 10% increments). These two additions greatly reduce the interpretable action space which cut down a whole lot of noise from sporarid training. The agent still produces it's normal float but the idea is to make learning easier by not forcing it to learn very precise behaviour in an already noisy and complex domain. 
-
-The gyms reward logic is also complex. In the early iterations the reward was directly the net asset value of the trades the agent makes. Now, the reward is based on different kinds of states that the agent is likely to be in. So for example there is a different reward calculation for holding no trades, holding losing or winning trades, selling losing or winning trades, and even penalizations for overtrading (via slippage and transaction cost estimates). This fine tuning of dense reward has noticably sculpted intelligent behaviour. It is not perfect, but the agent's that are trained do end up showing consistently larger average profit compared to average loss. The base value used to calculate the reward is the current unrealized PnL (or realized PnL if rewarding a selling position state) relative to a profit target. For example the profit target can be 100 dollars per trade, if the current PnL is 80 dollars then the relative value is 0.8. It's a simple representation but can be used in a nuanced way. 
-
-Lastly, the gym handles extensive logging. It saves the normalized obs that the agent sees (for debugging), it creates an info vector for every timestep to keep track of what the agent/environment is doing. This too is saved as a CSV and can be used to analyze and produce performance stats (such as the average profit and losses). It contains only useful auxiliary information to expose what's occurring under the head. It also outputs the total PnL at every episode to a callback wrapper which logs this to tensorboard alongside the default SB3 logging. The gym also outputs differently labelled CSVs for training and validation runs for the same model so that data is not overwritten.
+### Model Parameters
+The model parameters have not been tweaked much. Following is the current set:
+```
+learning_rate=3e-4,
+buffer_size=1_000_000,
+batch_size=512,
+learning_starts=25_000,
+train_freq=1,
+gradient_steps=4,
+gamma=0.99,
+tau=0.005,
+use_sde=True,
+sde_sample_freq=20,
+target_entropy=-0.5,
+ent_coef="auto",
+```
 
 ## Future developments
 * Fine tune TCN architecture
