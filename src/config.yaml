@@ -41,7 +41,7 @@ training_splits:
           - INTC 
         timesteps: 200000
   
-  training_6:
+  training_5:
       - tickers: 
           - AMD 
         timesteps: 240000
@@ -50,7 +50,7 @@ training_splits:
           - NVDA
         timesteps: 210000
   
-  training_7:
+  training_6:
       - tickers: 
           - AMD 
         timesteps: 240000
