@@ -152,11 +152,6 @@ class TradingEnv(gym.Env):
             # default file name when environment is being used for training
             obs_path = f"{self.model_path}-obs-t-{self.num}.csv"
             csv_path = f"{self.model_path}-training-{self.num}.csv"
-
-            # change file name if running environment for validation of a model
-            if self.validation:
-                obs_path = f"{self.model_path}-obs-v-{self.num}.csv"
-                csv_path = f"{self.model_path}-validation-{self.num}.csv"
             
             # round float values for presentation
             meta_log_df = np.round(meta_log_df, 3)
@@ -164,8 +159,19 @@ class TradingEnv(gym.Env):
             self.log_buffer.append(meta_log_df)
             self.obs_buffer.append(self.obs_df)
             
-            # dump buffer to csv every 10k timesteps
-            if self.global_step * 12 >= 10000:                                                  # multiplied by 12 due to vec_env use messing up the internal step count                            
+
+            # change file name and logging frequency if running environment for validation of a model
+            step = self.global_step
+            if self.validation:
+                obs_path = f"{self.model_path}-obs-v-{self.num}.csv"
+                csv_path = f"{self.model_path}-validation-{self.num}.csv"
+            
+            # for training multiplied by 12 due to vec_env usage messing up the internal step count 
+            else:
+                step = self.global_step * 12
+            
+            # log buffer to CSV once every 10k steps
+            if step >= 10000:                                                                            
                 self._buffer_helper(csv_path, obs_path)
                 self.global_step = 0
                   
@@ -394,6 +400,7 @@ class TradingEnv(gym.Env):
                 current_shares = prev_shares - new_shares
                 current_size = prev_size - position_size                    
             
+            # update avl cash
             avl_cash -= position_size
         
         # if holding same position as previous timestep (no change in action)
@@ -423,7 +430,7 @@ class TradingEnv(gym.Env):
 
         # get future price for unrealized PnL calculation
         future_price = market_price
-        if t+1 < len(self.meta) - 1:
+        if t != self.ep_len - 1:
             future_price = self.meta[t+1][self.marketprice_idx]
 
         current_size = 0
@@ -440,7 +447,7 @@ class TradingEnv(gym.Env):
             current_size = prev_size + position_size
             self.total_ep_pnl += realized_pnl
         
-        # update position size and avl_cash
+        # update avl_cash
         avl_cash += position_size
 
         # update info
