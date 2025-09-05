@@ -157,6 +157,7 @@ Select action: 5
 
 Quitting...
 ```
+These are results from an actual training run, though at that point the network architecture was an MLP.
 
 ## Outputs
 
