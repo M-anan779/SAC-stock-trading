@@ -17,23 +17,41 @@ class TCN(BaseFeaturesExtractor):
         super().__init__(observation_space, features_dim)
 
         in_c = observation_space.shape[1]                                   # number of features in obs
-        timesteps = observation_space.shape[0]
+        timesteps = observation_space.shape[0]                              # number of steps in obs for normalization
 
-        # TCN with 3 convolutional layers, layer normalization and tanh as activation function
+        # TCN architecture
         self.tcn = nn.Sequential(
             
-            causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=5), 
+            # projection layer first (in_c x 1 conv)
+            nn.Conv1d(in_channels=in_c, out_channels=features_dim, kernel_size=1),
+
+            # 7 1D convolutional layers with layer normalization and tanh as activation function
+            # RF = 31 (L = 7, K = 5)
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
             
             causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
             
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+            nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
+
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+            nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
+
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+            nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
+
+            causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+            nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh(),
+
             causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
             nn.LayerNorm(normalized_shape=[features_dim, timesteps]), nn.Tanh()
         )
 
+        # project (last timestep) into a latent vector for the actor and critic MLPs
         self.head = nn.Sequential(
-            nn.Linear(in_features=features_dim, out_features=features_dim), nn.Tanh()
+            nn.Linear(in_features=features_dim, out_features=features_dim)
         )
     
     def forward(self, x):
