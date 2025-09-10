@@ -1,6 +1,8 @@
 import os
 import gymnasium as gym
 import torch
+import pandas as pd
+from pathlib import Path
 from datetime import datetime
 from stable_baselines3 import SAC
 from environment.intraday_trading_env import TradingEnv
@@ -49,16 +51,26 @@ def train(splits, train_dir, load_path):
     log_dir = os.path.join("logs", log_id)
     os.makedirs(log_dir, exist_ok=True)
     model = None
-    
+
     # train model iteratively through each split (curriculum)
     for split_count, split in enumerate(splits):
         model_path = os.path.join(log_dir, f"model_{split_count}")
         tickers = split["tickers"]
-        timesteps = split["timesteps"]
-        print(f"Starting split_{split_count}: {tickers}, {timesteps} steps\n")
+        train_steps = split["timesteps"]
+        print(f"Starting split_{split_count}: {tickers}, {train_steps} steps\n")
+
+        # load ticker files and group episodes by date and ticker (each episode is a single trading day involving one ticker)
+        episode_list = []
+        for file in Path(train_dir).iterdir():
+            df = pd.read_csv(file)
+            if df["ticker"].iloc[0] not in tickers:
+                continue
+            for _, group in df.groupby("date"):
+                episode_list.append(group)
         
         # initialize training environtment, tensorboard and env callback logging
-        train_env = make_vec_env(lambda: Monitor(TradingEnv(train_dir, tickers, model_path, validation=False, num="_", steps=timesteps)), n_envs=12)
+        n_envs = 18
+        train_env = make_vec_env(lambda: Monitor(TradingEnv(tickers=tickers, episode_list=episode_list, model_path=model_path, validation=False, n_envs=n_envs, num="_", total_steps=train_steps)), n_envs=n_envs)
         pnl_writer = SummaryWriter(f"{model_path}-pnl_ma")
         pnl_callback = PnLCallBack(writer=pnl_writer, ma_window=5)
         
@@ -83,27 +95,28 @@ def train(splits, train_dir, load_path):
                     tensorboard_log=log_dir,
                     policy_kwargs = dict(
                         features_extractor_class=TCN,
-                        features_extractor_kwargs=dict(features_dim=32),
-                        net_arch=dict(pi=[], qf=[64, 32]),
+                        features_extractor_kwargs=dict(features_dim=128),
+                        net_arch=dict(pi=[128, 128], qf=[128, 128]),
                         activation_fn=torch.nn.Tanh,
-                        share_features_extractor=False              
+                        share_features_extractor=False,
+                        log_std_init=-2.3,      # σ ≈ 0.1         
                     ),
-                    learning_rate=3e-4,
-                    buffer_size=1_000_000,
-                    batch_size=512,
-                    learning_starts=25_000,
+                    learning_rate=1e-4,
+                    buffer_size=650_000,
+                    batch_size=256,
+                    learning_starts=35_000,
                     train_freq=1,
-                    gradient_steps=4,
-                    gamma=0.99,
-                    tau=0.005,
+                    gradient_steps=1,
+                    gamma=0.98,
+                    tau=0.03,
                     use_sde=True,
                     sde_sample_freq=20,
-                    target_entropy=-0.5,
                     ent_coef="auto",
+                    target_entropy="-0.5"
                 )
         
         # begin model training and save
-        model.learn(total_timesteps=timesteps, callback=pnl_callback, tb_log_name=f"model_{split_count}-learning")
+        model.learn(total_timesteps=train_steps, callback=pnl_callback, tb_log_name=f"model_{split_count}-learning")
         model.save(model_path)
         
 
