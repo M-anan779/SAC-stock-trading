@@ -1,13 +1,13 @@
 # data_ingestion.py parameters
-multiplier: '5'
+multiplier: '1'
 timespan: 'minute'
-start_date: "2015-08-01"
-end_date: "2025-07-01"
+start_date: "2015-09-01"
+end_date: "2025-09-01"
 
 # data directories
-input_dir: "data/raw_tickers_5-minute"
-training_dir: "data/training_sets_5-minute"
-validation_dir: "data/validation_sets_5-minute"
+input_dir: "data/raw_tickers_1-minute"
+training_dir: "data/training_sets_1-minute"
+validation_dir: "data/validation_sets_1-minute"
 
 # list of tickers in use
 tickers: [
@@ -23,24 +23,30 @@ training_splits:
           - AMD 
           - NVDA
           - INTC 
-        timesteps: 640000
-  
+        timesteps: 1380000
+    
   training_2:
+      - tickers: 
+          - AMD 
+          - NVDA
+        timesteps: 450000
+  
+  training_3:
       - tickers: 
           - AMD 
         timesteps: 240000
 
-  training_3:
+  training_4:
       - tickers: 
           - NVDA
         timesteps: 210000
 
-  training_4:
+  training_5:
       - tickers: 
           - INTC 
         timesteps: 200000
   
-  training_5:
+  training_6:
       - tickers: 
           - AMD 
         timesteps: 240000
@@ -49,7 +55,7 @@ training_splits:
           - NVDA
         timesteps: 210000
   
-  training_6:
+  training_7:
       - tickers: 
           - AMD 
         timesteps: 240000
