@@ -1,5 +1,7 @@
 import random
 import time
+import pandas as pd
+from pathlib import Path
 from stable_baselines3 import SAC
 from environment.intraday_trading_env import TradingEnv
 from utils.training_analysis import Analyzer
@@ -8,14 +10,23 @@ from torch.utils.tensorboard import SummaryWriter
 def validate(model_path, val_dir, tickers, eval_steps):
     num = random.randint(0, 999)                                                                            # random number helps distinguish validation runs for the same model save
     
+    # load ticker files and group episodes by date and ticker (each episode is a single trading day involving one ticker)
+    episode_list = []
+    for file in Path(val_dir).iterdir():
+        df = pd.read_csv(file)
+        if df["ticker"].iloc[0] not in tickers:
+            continue
+        for _, group in df.groupby("date"):
+            episode_list.append(group)
+
     # initialize base environment as validation env and load saved model
-    eval_env = TradingEnv(val_dir, tickers, model_path, validation=True, num=num, steps=eval_steps)
+    eval_env = TradingEnv(tickers=tickers, episode_list=episode_list, model_path=model_path, validation=True, n_envs=1, num=num, total_steps=eval_steps)
     model = SAC.load(model_path, env=eval_env)
 
     obs, info = eval_env.reset()
 
     arr = []
-    n = 5
+    n = 4
     timesteps = 0
     episode_count = 0
     writer = SummaryWriter(f"{model_path}-eval_pnl-{num}")                          # tensorboard logging
@@ -23,7 +34,7 @@ def validate(model_path, val_dir, tickers, eval_steps):
     current_time = start_time
     
     while timesteps < eval_steps:
-        action, _ = model.predict(obs, deterministic=True)
+        action, _ = model.predict(obs, deterministic=False)
         obs, reward, terminated, truncated, info = eval_env.step(action)
         timesteps += 1
 
