@@ -22,8 +22,8 @@ def compute_features(file, csv_dtypes, training_dir, validation_dir):
     ticker_df = ticker_df.drop(columns=["timestamp", "open", "high", "low", "close", "volume"])
     
     # split training and validation data sets
-    training_df = ticker_df[ticker_df["date"].between(dt.date(2015,1,1), dt.date(2022,12,31))]
-    validation_df = ticker_df[ticker_df["date"].between(dt.date(2023,1,1), dt.date(2025,12,31))]
+    training_df = ticker_df[ticker_df["date"].between(dt.date(2015,9,1), dt.date(2023,9,1))]
+    validation_df = ticker_df[ticker_df["date"].between(dt.date(2023,9,1), dt.date(2025,9,1))]
 
     # save both training + validation sets as CSV
     training_df.to_csv(training_dir / file.name, index=False)
