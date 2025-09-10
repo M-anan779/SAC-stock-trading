@@ -24,7 +24,7 @@ The pipeline performs several actions to facilitate this goal, including:
 * **Custom Gym Environment** (`intraday_trading_env.py`)
   * **Gym API**–compatible training environment for Stable-Baselines3
   * Simulates **realistic broker/trading logic** from interpreting SAC’s continuous action space
-  * Outputs a rolling window of 12 candles as observations (flow of market data), with each candle represented by 10 features
+  * Outputs a rolling window of 30 candles as observations (flow of market data), with each candle represented by 9 features
   * Allows **both short and long positions**
   * Tracks positions and PnL of active positions
   * Implements financial accounting (portfolio cash, available cash, short positions, shares, PnL, etc.)
@@ -178,9 +178,9 @@ These are results from an actual training run, though at that point the network 
 The raw data set is requested from Polygon.io by the pipeline, requests are limited to just the stock data endpoint. The following parameters define what data is fetched:
   * Time span: Data from 2015 to 2025 was used for this project
   * Tickers: Any stock listed on the US market. I selected roughly 20 stock picks from the NASDAQ100 based on volume and volatility metrics (example beta < 1.8)
-  * Time frame: Such as 5-minute, 1-day etc. For this project I used 5-minute data as this balances between noise and presenting strong intraday price movements.
+  * Time frame: Such as 5-minute, 1-day etc. For this project I initially used 5-minute data but am currently experimenting with 1-minute data. The reason being as this data set contains more state transitions.
 
-After preprocessing of the raa data as well, this results in about 150k-200k data points per individual stock. Giving well over **2.4 million state transitions** that could be used for training.
+After preprocessing of the raa data as well, this results in about 300k-550k data points per individual stock. Giving well over **8.4 million state transitions** that could be used for training.
 
 ### Goal
 The goal for the agent is to be able to learn to trade multiple tickers through some level of **cross ticker generalization**. Since real world data is limited, training on one ticker will not produce enough timesteps to learn such a complex task through DRL and not using enough varied data will most definately lead to overfitting.
@@ -189,25 +189,32 @@ As a result, my goal is to design the environment (`obs, reward`) and model arch
 
 ### Observation Space
 
-The **observation** space is a `[12, 10]` matrix representing a rolling window of 12 timesteps, each with a 10-feature vector. The 10 features encode an OHLCV “candle.”
-“Rolling window” means at time `t = 0` the indices are `[0, 11]` (inclusive), while at `t = 1` they are `[1, 12]`. Each window contains `N − 1` prior candles and one “current” candle. Using 5-minute data, a 12-step window covers \~1 hour, which is a practical context length for intraday trading.
+The **observation** space is a `[30, 9]` matrix representing a rolling window of 30 timesteps, each with a 9-feature vector. The 9 features encode an OHLCV “candle.”
+“Rolling window” means at time `t = 0` the indices are `[0, 30]` (inclusive), while at `t = 1` they are `[1, 31]`. Each window contains `N − 1` prior candles and one “current” candle. Using 1-minute data, a 30-step window covers 30 minutes, which is a practical context length for intraday trading at this smaller time frame.
 
 ### Action Space
 
-The action is a single float in `[-1, 1]`. The environment interprets:
+The action is a single float in `[-1, 1]`. The environment interprets this value as discretized buckets as so:
+```
+        action = np.clip(action, -1, 1)
+        action = np.round(action, 3)                                                   
+        
+        action = int(np.round(abs(action) * 1000))
+        action = action % 2
+```
+In this case there are only 2 buckets:
+  * mod 0: "NP", "LS" (hold no position, sell long position)
+  * mod 1: "LB", "HP" (buy long position, hold same position)
 
-* Magnitude as **position size** (% allocation)
-* Change vs. previous action as **direction** (buy/sell)
+These two buckets are repeated to cover the entire action space, that is to say the continuous action space at any point is always interpreted as either mod 0 or mod 1. The reason I chose this design was because my previous agents would always get stuck to one "type" of action (such as only going long) but not trying to hold or sell. This was because huge areas of my action space was just one type of action. Example: action > 0 interpreted as long. So for the agent to discover shorting it would need to output action < 0. The issue is that SAC samples from a gaussian distribution given by paramters it learns, the mean and the std. As training progresses SAC shrinks the std which results in sampled actions that are closer to the mean. This means if the action mean is equal to 0.5 then it is very unlikely for the agent to consistently output -0.5 and continue exploring. This issue becomes worse when the only way to hold out of trading is outputting 0. This explained why all of my previous agents could not discover holding consistently. 
 
-This supports **long, short, and reversal** trades with variable sizes.
-Because trading is inherently discrete, a continuous action space can be noisy (e.g., failing to output exact 0 to flatten). To mitigate:
+By making the buy and sell options always next to each other and repeatedly at various values in the action space, this makes the agent much more likely to discover selling or holding (both same position and no position) even with smaller STD. With this change the agents I trained exhibited much healthier aciton distributions with "hold" type actions outweighing the buy/sell actions. i.e. the agent was being logical about it's trading activity. 
 
-* A **dead zone** maps a range around 0 to “no position”
-* Actions are **rounded to one decimal** (10% increments), which is sufficient granularity for sizing and reduces noise
+The agents action have no variable position size element. This is because in day trading especially involving one stock, it does not make sense to take positions without using the entire capital that is available to us. Since profits scale linearly with position size. This also made analyzing PnL trends much simpler too, and made small bugs visible that had previously gone unnoticed.
 
 ### Features
 
-The 10 features are computed by transforming technical-indicator outputs (derived from OHLCV) into custom **representations**.
+The 9 features are computed by transforming technical-indicator outputs (derived from OHLCV) into custom **representations**.
 
 ### Normalization
 
@@ -217,53 +224,55 @@ Most features are **z-score normalized** (per feature); a few use feature-specif
 
 The network uses a **TCN** as a feature extractor. The extractor is **not shared**: the actor and critic each have their own TCN so their gradients don’t interfere. One extractor learns representations suited to the policy, the other for the critic.
 
-The extractor has three `Conv1d` layers. Each uses 32 channels (except the first, whose input channels match the feature count, 10) and **kernel size = 5**, giving a receptive field that roughly covers the window. With only 12 timesteps, dilations aren’t necessary. After each conv:
+The first layer of the extractor is a 1x1 Conv layer that mixes values across features but only within one time step (k = 1). This projection layer is meant to stabilize the feature encoding:
+```
+          nn.Conv1d(in_channels=in_c, out_channels=features_dim, kernel_size=1),
+```
 
+The extractor has seven `Conv1d` layers. Each uses 128 channels and **kernel size = 5**, giving a receptive field that covers the entire window with R = 31. I chose having deeper layers over using dilations.
+After each conv:
 * `LayerNorm` with `[features_dim, timesteps]`
 * `Tanh` activation (preserves negative inputs that `ReLU` would zero)
-
-```python
-causalConv1d(in_channels=in_c, out_channels=features_dim, kernel_size=5),
-nn.LayerNorm(normalized_shape=[features_dim, timesteps]),
-nn.Tanh(),
+```
+          causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+          nn.LayerNorm(normalized_shape=[features_dim, timesteps]),
+          nn.Tanh(),
 ```
 
 `causalConv1d` is a thin wrapper around `Conv1d` with left padding.
 
 We take the **last timestep** from the extractor output as a flat vector for the policy/critic heads.
-The **policy head** is linear (no hidden layers), while the **critic heads** use hidden layers (capturing nonlinearities). The critic MLP uses `Tanh` activations with two layers: 64 → 32.
-
+Both the **policy head** and the **critic heads** use two linear layers with `Tanh` activations, size: 128 → 128.
 ```
 policy_kwargs = dict(
-    features_extractor_class=TCN,
-    features_extractor_kwargs=dict(features_dim=32),
-    net_arch=dict(pi=[], qf=[64, 32]),
-    activation_fn=torch.nn.Tanh,
-    share_features_extractor=False
-)
+         features_extractor_class=TCN,
+         features_extractor_kwargs=dict(features_dim=128),
+         net_arch=dict(pi=[128, 128], qf=[128, 128]),
+         activation_fn=torch.nn.Tanh,
+         share_features_extractor=False,
+         log_std_init=-2.3,      # σ ≈ 0.1         
+     )
 ```
 
 ### Model Parameters
 
-Current model parameters which I found to work well:
+Current model parameters:
 ```
-learning_rate=3e-4,
-buffer_size=1_000_000,
-batch_size=512,
-learning_starts=25_000,
-train_freq=1,
-gradient_steps=4,
-gamma=0.99,
-tau=0.005,
-use_sde=True,
-sde_sample_freq=20,
-target_entropy=-0.5,
-ent_coef="auto",
+          learning_rate=1e-4,
+          buffer_size=650_000,
+          batch_size=256,
+          learning_starts=35_000,
+          train_freq=1,
+          gradient_steps=1,
+          gamma=0.98,
+          tau=0.03,
+          use_sde=True,
+          sde_sample_freq=20,
+          ent_coef="auto",
+          target_entropy="-0.5"
 ```
+Typical training runs with this model are done using 3 ticker pairings (AMD, NVIDIA, INTC: chip manufacturers) over 1 to 1.5 million timesteps (roughly 8 years of data). Validation is done on the remaining 2 years of unseen data for each ticker used during training. 
 
 ## Future Developments
-
-* Fine-tune the TCN architecture
-* Experiment with feature generation to improve cross-ticker generalization
-* Update CLI (`run.py`) to directly edit `config.yaml` for “train” and “fetch data”
+* Keep experimenting with net_arch and oba
 
