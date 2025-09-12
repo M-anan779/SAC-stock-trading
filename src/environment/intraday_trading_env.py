@@ -3,32 +3,39 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import os
-from pathlib import Path
 
 # custom env class inherting from base gym class
 class TradingEnv(gym.Env):
-
     # __init__() class constructor, required for gym
-    def __init__(self, data_dir, tickers, model_path, validation, num, steps):
+    def __init__(self, tickers, episode_list, model_path, validation, n_envs, num, total_steps):
         super().__init__()
 
         # initialization
-        self.num = num
-        self.tickers = tickers
-        self.data_dir = Path(data_dir)
-        self.model_path = model_path
-        self.validation = validation
+        self.n_envs = n_envs                        # number of envs being used (account for logging frequency)
+        self.num = num                              # run id to save files with the correct naming
+        self.tickers = tickers                      # tickers being used as part of data set
+        self.model_path = model_path                # model save path
+        self.validation = validation                # validation run or not (different file save and data set used)
+        self.episode_df_list = episode_list         # list of episodes to be used (no random shuffling for validation runs)
+        self.total_steps = total_steps              # total number of training/validation steps used for finishing logging
+
+        # environment state variables
         self.current_step = 0
         self.global_step = 0
+        self.steps_since_lastlog = 0
         self.current_ep = 0
         self.ep_len = 0
         self.meta = None 
-        self.window_size = 12
-        self.features = 10
+        self.window_size = 30
+        self.features = 9
         self.init_cash = 50000
         self.total_ep_pnl = 0
-        self.obs_buffer = []
+        self.obs_buffer = []                        # buffer to limit CSV write outs
         self.log_buffer = []
+        self.p_streak = 0                           # helps keep track of good action streaks for incremental step wise rewards
+        self.l_streak = 0
+        self.total_p_streak = 0
+        self.total_l_streak = 0
         
         # action and observation spaces
         self.action_space = spaces.Box(low=-1, high=1, shape = (1, ), dtype = np.float32)
@@ -41,28 +48,15 @@ class TradingEnv(gym.Env):
         # meta vector index order (the vector contains state transition info produced by the env at a single timestep)
         self.avl_cash_idx = 0
         self.marketprice_idx = 1
-        self.action_idx = 2
-        self.psize_idx = 3
-        self.realized_pnl_idx = 4
-        self.unrealized_pnl_idx = 5
-        self.reward_idx = 6
+        self.psize_idx = 2
+        self.realized_pnl_idx = 3
+        self.unrealized_pnl_idx = 4
+        self.reward_idx = 5
 
         self.meta_len = self.reward_idx + 1                                                       
         self.flag_arr = []                                            # since flags are strings and not np.float32, they cannot be directly added to the numpy array 
         self.shares_arr = []                                          # since shares are ints and not np.float32                              
 
-        # load ticker files and group episodes by date and ticker (each episode is a single trading day involving one ticker)
-        self.ticker_file_paths = [f for f in self.data_dir.iterdir()]
-        self.episode_df_list = []
-        for file in self.data_dir.iterdir():
-            df = pd.read_csv(file)
-            
-            if df["ticker"].iloc[0] not in self.tickers:
-                continue
-            
-            for _, group in df.groupby("date"):
-                self.episode_df_list.append(group)
-        
         if (self.validation != True):
             np.random.shuffle(self.episode_df_list)
 
@@ -71,7 +65,7 @@ class TradingEnv(gym.Env):
         super().reset(seed=seed)
         
         # initialization of new training episode
-        self.positions = PositionLedger(self.init_cash)
+        self.positions = PositionLedger()
         self.current_step = 0
         self.total_ep_pnl = 0
         t = self.current_step        
@@ -108,19 +102,40 @@ class TradingEnv(gym.Env):
     # step() function, called once per state transtion to return the next state and reward (calls internal gym helpers), required for gyms
     def step(self, action):       
         t = self.current_step
+        prev_t = self._check_index(t)
 
         # clean and store action
         action = np.clip(action, -1, 1)
-        action = np.round(action, 1)                                                    # round to one decimal to prevent minute changes in position size
-        if action >= -0.4 and action <= 0.4:                                            # increase "dead zone" for selling/holding no position (outputting action = 0)
-            action = 0 
+        action = np.round(action, 3)                                                    # round to one decimal to prevent minute changes in position size
         
+        action = int(np.round(abs(action) * 1000))
+        action = action % 2
+
+        prev_action = self.flag_arr[prev_t]
+        # compute trade
+        # long
+        if action == 0:     
+            if prev_action in ["NP", "LS"]:
+                self._buy("LB", t)
+            
+            elif prev_action in ["LB", "HP"] :
+                self._buy("HP", t)
+        # sell
+        elif action == 1:
+            if prev_action in  ["LB", "HP"]:
+                self._sell("LS", t)
+            
+            elif prev_action in ["NP", "LS"]:
+                self.meta[t][self.realized_pnl_idx] = 0.0
+                self.meta[t][self.avl_cash_idx] = self.meta[prev_t][self.avl_cash_idx]
+                self.shares_arr[t] = 0
+                self.flag_arr[t] = "NP"
+             
         # store action as part of env info and obs (agent sees it's previous action for context regarding it's trading position)
-        self.meta[t][self.action_idx] = action
         self.obs_matrix[t + self.window_size - 1, self.o_action_idx] = action
 
-        # compute trade and retrieve reward
-        self._trade_helper(t)
+        # get reward
+        self._calculate_reward(t)
         reward = self.meta[t][self.reward_idx]
 
         # increment step
@@ -137,14 +152,14 @@ class TradingEnv(gym.Env):
             
             # construct meta into dataframe
             meta_log_df = pd.DataFrame(self.meta, columns=[
-                    "avl_cash", "market_price", "action", "position_size", "realized_pnl", "unrealized_pnl", "reward"
+                    "avl_cash", "market_price", "position_size", "realized_pnl", "unrealized_pnl", "reward"
                 ])
             meta_log_df.insert(0, "ticker", self.current_ep_ticker)
             meta_log_df.insert(0, "date", self.current_ep_date)
             meta_log_df.insert(0, "time", self.current_ep_timeseries)
             meta_log_df.insert(0, "flag", pd.Series(self.flag_arr))
             meta_log_df.insert(0, "shares", pd.Series(self.shares_arr))
-            meta_log_df = meta_log_df[["ticker", "date", "time", "avl_cash", "shares", "position_size", "market_price", "action", "flag", "unrealized_pnl", "realized_pnl", "reward"]]
+            meta_log_df = meta_log_df[["ticker", "date", "time", "avl_cash", "position_size", "shares", "market_price", "unrealized_pnl", "realized_pnl", "reward", "flag"]]
             
             # sum of episode pnl data used later for tensorboard logging                                                        
             info = {"episode_pnl": self.total_ep_pnl}
@@ -154,31 +169,32 @@ class TradingEnv(gym.Env):
             csv_path = f"{self.model_path}-training-{self.num}.csv"
             
             # round float values for presentation
-            meta_log_df = np.round(meta_log_df, 3)
+            meta_log_df = np.round(meta_log_df, 5)
             self.obs_df = np.round(pd.DataFrame(self.obs_matrix, columns=self.obs_df.columns.tolist()), 2)
             self.log_buffer.append(meta_log_df)
             self.obs_buffer.append(self.obs_df)
             
 
             # change file name and logging frequency if running environment for validation of a model
-            step = self.global_step
             if self.validation:
                 obs_path = f"{self.model_path}-obs-v-{self.num}.csv"
                 csv_path = f"{self.model_path}-validation-{self.num}.csv"
             
-            # for training multiplied by 12 due to vec_env usage messing up the internal step count 
-            else:
-                step = self.global_step * 12
-            
+            # multiply step count by number of environments which are stepping in parallel
+            self.steps_since_lastlog = self.steps_since_lastlog * self.n_envs                                               
             # log buffer to CSV once every 10k steps
-            if step >= 10000:                                                                            
+            if self.steps_since_lastlog >= 10000:                                                                            
                 self._buffer_helper(csv_path, obs_path)
-                self.global_step = 0
+                self.steps_since_lastlog = 0
+            # log any remainders near end of training
+            elif self.total_steps - self.global_step <= 10000:
+                self._buffer_helper(csv_path, obs_path)
+            self.steps_since_lastlog += self.current_step                                                           # update logging counter
                   
         # return values for step()
         return observation, reward, terminate, truncated, info
     
-    # helper to dump and reset buffer
+    # helper to dump buffer into CSV and then reset the buffer
     def _buffer_helper(self, csv_path, obs_path):
         logdf = pd.concat(self.log_buffer, ignore_index=True)
         obsdf = pd.concat(self.obs_buffer, ignore_index=True)
@@ -215,7 +231,7 @@ class TradingEnv(gym.Env):
             info = np.zeros(self.meta_len, dtype=np.float32)
             info[self.avl_cash_idx] = self.init_cash 
             info[self.marketprice_idx] = market_price.iloc[i + self.window_size - 1]        # price of last candle of current state where trades are taken
-            self.flag_arr.append("_")
+            self.flag_arr.append("NP")
             self.shares_arr.append(0)
             self.meta.append(info)
         
@@ -228,235 +244,246 @@ class TradingEnv(gym.Env):
         obs = self.obs_matrix[t : t + self.window_size]
         return obs
 
-   # reward calculations for reversals are handled impliclitly
+    # main reward shaping logic
+    # reward uses temporal feedback (long profitable streaks vs chop due to volatility), PnL feedback (profits outweigh)
     def _calculate_reward(self, t):
-        prev_t = self._check_index(t)
+        curr_action = self.flag_arr[t]
+        profit_target = 200                                                                     # profit target per trade                        
+        loss_target = profit_target / 2                                                         # loss target always set to enforce a 2:1 profit to loss ratio
+        scaled_cost = (0.000125 * abs(self.meta[t][self.psize_idx])) / profit_target            # slippage and transaction fees calculated relative to profit target (% of profit deduction)            
+        unrealized_pnl = self.meta[t][self.unrealized_pnl_idx]                                  # raw unrealized pnl of position if position was held unchanged at current timestep
+        realized_pnl = self.meta[t][self.realized_pnl_idx]                                      # raw realized pnl if position was old at current timestep
+
+        # normalize unrealized + realized pnl as a profit or loss factor
+        relative_realized = 0
+        relative_unrealized = 0
+        if realized_pnl > 0:
+            relative_realized = (realized_pnl / profit_target)
+        else:
+            relative_realized = (realized_pnl / loss_target)
+        if unrealized_pnl > 0:
+            relative_unrealized = (unrealized_pnl / profit_target)
+        else:
+            relative_unrealized = (unrealized_pnl / loss_target)
         
-        curr_action = self.meta[t][self.action_idx]
-        prev_action = self.meta[prev_t][self.action_idx]
-        target = 0.003 * self.init_cash                                                                     # profit target: 0.3% of portfolio value per trade                         
-        scaled_cost = (0.00005 * abs(self.meta[t][self.psize_idx])) / target                                # used for slippage and fees to be used as a penalty for overtrading and entering weak positions              
-        
-        # pnl
-        unrealized_pnl = self.meta[t][self.unrealized_pnl_idx]
-        realized_pnl = self.meta[t][self.realized_pnl_idx]
-        relative_unrealized = unrealized_pnl / target
-        relative_realized = realized_pnl / target
+        # market price change over N = 15 average price
+        window = 15        
+        lookback = min(window, t + 1)                                                           # adjust to look back near start of ep 
+        recent_prices = [self.meta[t - i][self.marketprice_idx] for i in range(lookback)]
+        price_range = (max(recent_prices) - min(recent_prices)) / np.mean(recent_prices)
 
         reward = 0
+
         # update next timestep in obs with the active positions future pnl data at t+1
         if t != self.ep_len - 1:
-            self.obs_matrix[t + self.window_size, self.o_pnltarget_idx] = self.meta[t+1][self.unrealized_pnl_idx] / target
-        
-        # no change in position status (whether holding same position or no position)
-        if curr_action == prev_action:
-            # holding no position
-            if curr_action == 0.0:
-                price = self.meta[t][self.marketprice_idx]
-                prev_price = self.meta[prev_t][self.marketprice_idx]
-                change = (price - prev_price) / prev_price
-                
-                # reward holding during poor price movement
-                if abs(change) < 0.0005:
-                    reward = 0.0001
-                
-                # penalize for holding out of trading too much
-                else:
-                    reward -= abs(change) * 5
-                
-            # holding same position (no change in delta_a)
+            future_pnl = self.meta[t+1][self.unrealized_pnl_idx]
+            if future_pnl < 0:
+                relative_pnl = future_pnl / loss_target
             else:
-                # if held position is growing in value
-                if relative_unrealized > 0 and relative_unrealized < 0.8:
-                    reward = relative_unrealized * 2
+                relative_pnl = future_pnl / profit_target
+            self.obs_matrix[t + self.window_size, self.o_pnltarget_idx] =  relative_pnl
+       
+        # CASE 0: holding no position
+        if curr_action == "NP":
+            # CASE 0A: minimize negative reward for no trading once tolerable total loss has been reached
+            if self.total_ep_pnl <= loss_target:
+                reward = -0.001
 
-                # if held position has exceeded a certain amount of profit growth (incentivise agent to close positions at a certain point)
-                elif relative_unrealized >= 0.80:
-                    reward = -0.0001  
+            # CASE 0B: trading during poor price movement
+            elif price_range <= 0.003:
+                if self.total_ep_pnl <= profit_target:
+                    reward = 0.001
                 
-                # if held position has lost value
+                # larger reward for avoiding once profit target has been reached
                 else:
-                    # high loss in value
-                    if relative_unrealized <= -1.5:
-                        reward = relative_unrealized * 1.25
-                    
-                    # threshold/tolerable loss
-                    else:
-                        reward = -0.0001      
-        # sold position
-        else:
-            flag = self.flag_arr[t]
-            if flag in ["LS", "SS"]:
-                # profit
-                if relative_realized > 0:
-                    if relative_realized > 0.7:
-                        reward = relative_realized * 3
-                    elif relative_realized < 0.7 and relative_realized > 0.35:
-                        reward = relative_realized * 2
-                    else:
-                        reward = relative_realized * 1.15
-                # loss
-                else:
-                    if relative_realized <= -1.5:
-                        reward = relative_realized * 1.5
-                    else:
-                        reward = relative_realized * 0.9
+                    reward = 0.01
+        
+            # CASE 0C: no position during large price movement
+            elif price_range >= 0.006:
+                # penalize no trading when daily profit target has not been reached
+                if self.total_ep_pnl <= profit_target:
+                    reward = -0.15
                 
-                # slippage cost
-                reward -= scaled_cost
+                # allow avoiding risky trading as an option once profit target has been reached
+                else:
+                    reward = 0.1
+                
+        # CASE 1: holding same position 
+        elif curr_action == "HP":
             
-            # penalize reversals
-            elif flag in ["LR", "SR"]:
-                reward = -3
+            # CASE 1A: position is growing in value
+            if relative_unrealized >= 0 and relative_unrealized <= 1:
+                self.total_p_streak += 1
+                self.p_streak += 1
+                self.l_streak = 0
+                
+                reward = (self.p_streak / window) * relative_unrealized
+
+            # CASE 1B: position has exceeded desired growth (incentivise agent to close positions)
+            elif relative_unrealized >= 1:
+                self.total_p_streak += 1
+                self.p_streak += 1
+                self.l_streak = 0
+                
+                reward = 0.1 * relative_unrealized
             
-            # entered a new position
+            # CASE 1C: position has lost value
+            elif relative_unrealized < 0:
+                self.total_l_streak += 1
+                self.l_streak += 1
+                self.p_streak = 0
+
+                # threshold/tolerable loss
+                if relative_unrealized < 0 and relative_unrealized >= -1:
+                    reward = 0.2 * relative_unrealized
+                
+                # high loss in value
+                elif relative_unrealized < -1:
+                    reward = (self.l_streak / window) * relative_unrealized 
+            
+            # multipliers for preferring certain regimes
+            # low volatility
+            if  price_range <= 0.003:
+                reward *= 0.8
+            
+            # high volatility
+            elif price_range >= 0.0075:
+                reward *= 0.6
+            
+            # medium volatility
             else:
-                # transaction cost 
+                reward *= 1.5
+
+        # CASE 2: sold position
+        elif curr_action in ["LS", "SS"]:
+            
+            # CASE 2A: profit
+            if relative_realized > 0:
+                self.total_p_streak += 1
+                total_p_streak = self.total_p_streak / window
+                total_l_streak = self.total_l_streak / window
+
+                # high profit
+                if relative_realized >= 1:
+                    reward = abs(total_p_streak - total_l_streak) * relative_realized * 2
+                
+                # expected profit
+                elif relative_realized < 1 and relative_realized >= 0.5:
+                    reward = abs(total_p_streak - total_l_streak) * relative_realized * 1.5
+                
+                # low profit
+                else:
+                    reward = abs(total_p_streak - total_l_streak) * relative_realized * 1
+            
+            # CASE 2B: loss
+            else:
+                self.total_l_streak += 1
+                total_l_streak = self.total_l_streak / window
+                total_p_streak = self.total_p_streak / window                                   
+                
+                # high loss
+                if relative_realized <= -1:
+                    reward = abs(total_p_streak - total_l_streak) * relative_realized * 0.5
+                
+                # tolerable loss
+                else:
+                    reward = abs(total_p_streak - total_l_streak) * relative_realized * 0.25
+            
+            # reset variables
+            self.p_streak = 0
+            self.l_streak = 0
+            self.total_p_streak = 0
+            self.total_l_streak = 0
+
+            # slippage cost
+            reward -= scaled_cost
+            
+        # CASE 3: bought position
+        # negative rewards implicitly require the agent to secure higher profit to get a better cumulative rewards
+        elif curr_action in ["LB", "SB"]:
+            
+            # CASE 3A: trading during poor price movement
+            if  price_range <= 0.003:
+                reward = scaled_cost * -2
+            
+            # CASE 3B: trading during volatile price movement
+            elif price_range >= 0.0075:
+                reward = scaled_cost * -3
+            
+            # CASE 3C: trading during moderate price movement
+            else:
                 reward -= scaled_cost
         
-        # add new reward at current timestep
-        self.meta[t][self.reward_idx] += reward
-
-    def _trade_helper(self, t):
-        action = self.meta[t][self.action_idx]
-
-        # edge case, t == 0 first timestep
-        if t == 0:
-            prev_action = 0
-        else:
-            prev_action = self.meta[t-1][self.action_idx]
-
-        # holding no position
-        if action == 0 and prev_action == 0:
-            self.meta[t][self.realized_pnl_idx] = 0.0
-            self.meta[t][self.avl_cash_idx] = self.meta[t-1][self.avl_cash_idx]
-            self.flag_arr[t] = "NP"
-
-        # determine whether action is "buy short position (SB)" or "sell short position (SS)"
-        elif action <= 0 and prev_action <= 0:
-            if action <= prev_action:
-                self._buy(action, prev_action, "SB", t, reversal=False)
-            elif action > prev_action:
-                self._sell(action, prev_action, "SS", t)
-
-        # determine whether action is "sell long position (LS)" or "buy long position (LB)"
-        elif action >= 0 and prev_action >= 0:
-            if action < prev_action:
-                self._sell(action, prev_action, "LS", t)
-            elif action >= prev_action:
-                self._buy(action, prev_action, "LB", t, reversal=False)
-
-        # determine whether action is "short reversal-> sell short position + buy new long position" 
-        # or "long reversal-> sell long position + buy new short position"
-        else:
-            if action > 0 and prev_action < 0:
-                self._sell(0, prev_action, "SS", t)
-                self._calculate_reward(t)                                                          # additional call is necessary for reversals since it's technically two trading actions
-                self._buy(action, 0, "LB", t, reversal=True)
-                self.flag_arr[t] = "SR"
-            else:
-                self._sell(0, prev_action, "LS", t)
-                self._calculate_reward(t)
-                self._buy(action, 0, "SB", t, reversal=True)
-                self.flag_arr[t] = "LR"
+        # OUTPUT: new reward at current timestep
+        self.meta[t][self.reward_idx] += reward 
         
-        # compute reward for step()
-        self._calculate_reward(t)
-        
-    def _buy(self, action, prev_action, flag, t, reversal):
+    def _buy(self, flag, t):
         # check t == 0
         prev_t = self._check_index(t)                                                              
 
-        # change in action (delta) used to determine shares for a position
-        delta_a = action - prev_action                                                             
+        # change in action (delta) used to determine shares for a position                                                           
         market_price = self.meta[t][self.marketprice_idx]
-
-        # get future price for unrealized PnL calculation
-        future_price = market_price
-        if t != self.ep_len - 1:
-            future_price = self.meta[t+1][self.marketprice_idx]
         
-        current_size = 0
-        if delta_a != 0:
-            if (reversal):
-                # if this operation is part of second leg of reversal, then use the current timestep instead to access info for calculations  
-                avl_cash = self.meta[t][self.avl_cash_idx]
-                prev_shares = 0
-                prev_size = 0
-            else:
-                # else initialize as normal
-                avl_cash = self.meta[prev_t][self.avl_cash_idx]
-                prev_shares = int(self.shares_arr[prev_t])
-                prev_size = self.meta[prev_t][self.psize_idx]
+        avl_cash = self.meta[prev_t][self.avl_cash_idx]
+        prev_shares = int(self.shares_arr[prev_t])
 
-            # calculate shares and pnl
-            if flag == "LB":            # buy long position
-                new_shares, position_size = self.positions.add_position(abs(delta_a), "L", market_price)
+        position_size = 0
+        # calculate shares and pnl
+        match(flag):
+            case("LB"):           # buy long position
+                position_size, new_shares = self.positions.add_position("L", market_price, avl_cash)
                 current_shares = prev_shares + new_shares
-                current_size = prev_size + position_size 
+                avl_cash -= position_size 
 
-            elif flag == "SB":          # buy short position
-                new_shares, position_size = self.positions.add_position(abs(delta_a), "S", market_price)
+            case("SB"):          # buy short position
+                position_size, new_shares= self.positions.add_position("S", market_price, avl_cash)
                 current_shares = prev_shares - new_shares
-                current_size = prev_size - position_size                    
-            
-            # update avl cash
-            avl_cash -= position_size
+                avl_cash -= position_size
+
+            case("HP"):          # hold same position as previous time step
+                if t != self.ep_len - 1:
+                    future_price = self.meta[t+1][self.marketprice_idx]
+                    unrealized_pnl = self.positions.hold_position(future_price)
+                    position_size = self.meta[prev_t][self.psize_idx]
+                    avl_cash = self.meta[prev_t][self.avl_cash_idx]
+                    self.meta[t+1][self.unrealized_pnl_idx] = unrealized_pnl
+                
+                current_shares = prev_shares       
         
-        # if holding same position as previous timestep (no change in action)
-        else:
-            current_shares, position_size = self.positions.hold_position()
-            avl_cash = self.meta[prev_t][self.avl_cash_idx]
-            flag = "HP"
-
         # update info
-        self.meta[t][self.avl_cash_idx] = avl_cash                       
-        self.meta[t][self.psize_idx] = current_size
-        if t != self.ep_len - 1:
-            self.meta[t+1][self.unrealized_pnl_idx] = self.positions.get_unrealized_pnl(future_price)
+        self.meta[t][self.avl_cash_idx] = avl_cash                        
+        self.meta[t][self.psize_idx] = position_size
+        self.shares_arr[t] = int(current_shares)
         self.flag_arr[t] = flag
-        self.shares_arr[t] = int(current_shares)  
 
-    def _sell(self, action, prev_action, flag, t):
+    def _sell(self, flag, t):
         # check t == 0 and correct it
         prev_t = self._check_index(t)                                                           
         
         # change in action (delta) used to determine shares for a position
-        delta_a = action - prev_action
         market_price = self.meta[t][self.marketprice_idx]
         avl_cash = self.meta[prev_t][self.avl_cash_idx]
-        prev_shares = int(self.shares_arr[prev_t])
-        prev_size = self.meta[prev_t][self.psize_idx]
 
-        # get future price for unrealized PnL calculation
-        future_price = market_price
-        if t != self.ep_len - 1:
-            future_price = self.meta[t+1][self.marketprice_idx]
-
-        current_size = 0
+        current_shares = 0
         # calculate shares and pnl
         if flag == "LS":                # sell long position                                                                         
-            new_shares, realized_pnl, position_size = self.positions.sell_position(abs(delta_a), "L", market_price)
-            current_shares = prev_shares - new_shares
-            current_size = prev_size - position_size
-            self.total_ep_pnl += realized_pnl
+            realized_pnl, position_size = self.positions.sell_position(market_price)
+            current_shares = 0
+            self.total_ep_pnl = realized_pnl
 
         elif flag == "SS":              # sell short position
-            new_shares, realized_pnl, position_size = self.positions.sell_position(abs(delta_a), "S", market_price)          # helper returns positive shares
-            current_shares = prev_shares + new_shares
-            current_size = prev_size + position_size
-            self.total_ep_pnl += realized_pnl
+            realized_pnl, position_size = self.positions.sell_position(market_price)          # helper returns positive shares
+            current_shares = 0
+            self.total_ep_pnl = realized_pnl
         
         # update avl_cash
         avl_cash += position_size
 
         # update info
         self.meta[t][self.realized_pnl_idx] = realized_pnl
-        self.meta[t][self.unrealized_pnl_idx] = self.positions.get_unrealized_pnl(market_price)
-        if t != self.ep_len - 1:
-            self.meta[t+1][self.unrealized_pnl_idx] = self.positions.get_unrealized_pnl(future_price)                       # add unrealized_pnl calculation for next timestep
+        self.meta[t][self.unrealized_pnl_idx] = 0
         self.meta[t][self.avl_cash_idx] = avl_cash
-        self.meta[t][self.psize_idx] = current_size
+        self.meta[t][self.psize_idx] = 0
         self.shares_arr[t] = int(current_shares)
         self.flag_arr[t] = flag
     
@@ -470,30 +497,12 @@ class TradingEnv(gym.Env):
 # data object class to store trade position related attributes
 class PositionNode:
     # position data
-    def __init__(self, delta, cash, position_price, flag):
-        self.delta = delta
+    def __init__(self, cash, position_price, flag):
         self.cash = cash
         self.position_price = position_price
-        self.shares = int((delta * cash) / position_price)
+        self.shares = int(self.cash / position_price)
         self.size = self.shares * position_price
         self.flag = flag
-    
-    # if the whole position size amount of shares is not to be sold
-    def partial_sell(self, delta, market_price):
-        output_shares = (delta * self.cash) / self.position_price
-        output_size = output_shares * self.position_price
-        
-        realized_pnl = 0
-        if (self.flag == "L"):
-            realized_pnl = (market_price - self.position_price) * output_shares
-        elif (self.flag == "S"):
-            realized_pnl = -1 * ((market_price - self.position_price) * output_shares)
-        
-        self.delta = np.round((self.delta - delta), 1)
-        self.shares -= int(output_shares)
-        self.size -= int(output_size)
-
-        return int(output_shares), realized_pnl, output_size
     
     # helper to calculate pnl (different calculation for long or short positions)
     def get_pnl(self, market_price):
@@ -502,93 +511,40 @@ class PositionNode:
         elif (self.flag == "S"):
             return -1 * (market_price - self.position_price) * self.shares
 
-# helper class to abstract position tracking and managemement (LIFO structure), used to return appropriate shares and pnl after trading actions
+# kept general structure from previous iteration for implementing simultaneous trades in multiple tickers for the future
+# helper class to abstract position tracking and managemement, used to return appropriate shares and pnl after trading actions
 class PositionLedger:
-    def __init__(self, init_cash):
+    def __init__(self):
         self.ledger = []
-        self.cash = init_cash
     
-    # pop top of stack
-    def _pop(self):
-        if len(self.ledger) != 0:
-            return self.ledger.pop()
-        else:
-            None
-    
-    # push to top of stack
-    def _push(self, node):
-        self.ledger.append(node)
-    
-    def hold_position(self):
-        total_shares = 0
-        total_size = 0
+    def hold_position(self, market_price):  
+        unrealized_pnl = 0 
         
-        for position in self.ledger:
-            total_shares += position.shares
-            total_size += position.size
-            
-        return int(total_shares), total_size
+        if len(self.ledger) != 0:
+            position = self.ledger.pop()
+            unrealized_pnl = position.get_pnl(market_price)
+            self.ledger.append(position)
+        
+        return unrealized_pnl
     
     # open new position and return shares, pnl, and size
-    def add_position(self, delta, flag, current_price):
-        delta = np.round(abs(delta), 1)     
-     
-        if delta != 0: 
-            node = PositionNode(delta, self.cash, current_price, flag)
-            self._push(node)
-
-            return int(node.shares), node.size
+    def add_position(self, flag, current_price, cash):    
+        position = PositionNode(cash, current_price, flag)
+        self.ledger.append(position)
+        return position.size, int(position.shares)
 
     # close position and return shares, pnl, and size 
-    def sell_position(self, delta, flag, market_price):
-        total_shares = 0
-        realized_pnl = 0
-        total_size = 0
+    def sell_position(self, market_price):
+        realized_pnl = 0 
+        size = 0
         
-        delta = np.round(abs(delta), 1)
-        top = self._pop() 
-
-        if top is not None:
-            remaining = np.round(np.float64(top.delta - delta), 1)
-            if remaining < 0:
-                total_shares += top.shares
-                realized_pnl += top.get_pnl(market_price)
-                total_size += top.size
-                
-                shares, current_pnl, size = self.sell_position(abs(remaining), flag, market_price)
-                total_shares += shares
-                realized_pnl += current_pnl
-                total_size += size
-            
-            elif remaining > 0:
-                shares, current_pnl, size = top.partial_sell(abs(delta), market_price)
-                total_shares += shares
-                realized_pnl += current_pnl
-                total_size += size
-                self._push(top)
-            
-            else:
-                total_shares += top.shares
-                realized_pnl += top.get_pnl(market_price)
-                total_size += top.size
-
-        else:
-            return 0.0, 0.0, 0.0, 0.0
-
-        return int(total_shares), realized_pnl, total_size
+        if len(self.ledger) != 0:
+            position = self.ledger.pop()
+            realized_pnl = position.get_pnl(market_price)
+            size = position.size
+        
+        return realized_pnl, size
     
-    def get_unrealized_pnl(self, future_price):
-        unrealized_pnl = 0.0
-        if len(self.ledger) == 0:
-            return 0.0
-        else:
-            for position in self.ledger:
-                if position is not None:
-                    unrealized_pnl += position.get_pnl(future_price)
-                else:
-                    unrealized_pnl += 0.0
-            
-            return unrealized_pnl
         
         
     
