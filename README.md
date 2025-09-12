@@ -279,5 +279,7 @@ Current model parameters:
 Typical training runs with this model are done using 3 ticker pairings (AMD, NVIDIA, INTC: chip manufacturers) over 1 to 1.5 million timesteps (roughly 8 years of data). Validation is done on the remaining 2 years of unseen data for each ticker used during training. 
 
 ## Future Developments
-* Keep experimenting with net_arch and oba
+* Reintroduce shorting actions for agent
+* Add trending/consolidating market regime feature to obs design
+* Automated ablation testing of all features
 
