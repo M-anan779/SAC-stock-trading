@@ -69,7 +69,7 @@ def train(splits, train_dir, load_path):
                 episode_list.append(group)
         
         # initialize training environtment, tensorboard and env callback logging
-        n_envs = 18
+        n_envs = 24
         train_env = make_vec_env(lambda: Monitor(TradingEnv(tickers=tickers, episode_list=episode_list, model_path=model_path, validation=False, n_envs=n_envs, num="_", total_steps=train_steps)), n_envs=n_envs)
         pnl_writer = SummaryWriter(f"{model_path}-pnl_ma")
         pnl_callback = PnLCallBack(writer=pnl_writer, ma_window=5)
