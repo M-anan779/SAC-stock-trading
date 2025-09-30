@@ -2,6 +2,7 @@
 numpy
 pandas
 pandas-ta
+scipy
 
 # DRL
 torch
