@@ -5,6 +5,7 @@ The base SAC implementation is handled by **Stable-Baselines3**, but it is modif
 
 The pipeline performs several actions to facilitate this goal, including:
 * Data preprocessing
+* Feature Generation
 * Training 
 * Validation
 * Logging
@@ -234,12 +235,12 @@ The first layer of the extractor is a 1x1 Conv layer that mixes values across fe
           nn.Conv1d(in_channels=in_c, out_channels=features_dim, kernel_size=1),
 ```
 
-The extractor has seven `Conv1d` layers. Each uses 128 channels and **kernel size = 5**, giving a receptive field that covers the entire window with R = 31. I chose having deeper layers over using dilations.
+The extractor has three `Conv1d` layers with 128 output channels. Each one has **kernel size = 5** and with exponential dilations (1,2 and 4) this configuration gives a receptive field R = 29. This provides sufficient coverage of the timesteps in the data.
 After each conv:
 * `LayerNorm` with `[features_dim, timesteps]`
 * `Tanh` activation (preserves negative inputs that `ReLU` would zero)
 ```
-          causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+          causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5, dilation=1),  
           nn.LayerNorm(normalized_shape=[features_dim, timesteps]),
           nn.Tanh(),
 ```
