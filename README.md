@@ -5,6 +5,7 @@ The base SAC implementation is handled by **Stable-Baselines3**, but it is modif
 
 The pipeline performs several actions to facilitate this goal, including:
 * Data preprocessing
+* Feature Generation
 * Training 
 * Validation
 * Logging
@@ -25,18 +26,23 @@ The pipeline performs several actions to facilitate this goal, including:
   * **Gym API**–compatible training environment for Stable-Baselines3
   * Simulates **realistic broker/trading logic** from interpreting SAC’s continuous action space
   * Outputs a rolling window of 30 candles as observations (flow of market data), with each candle represented by 9 features
-  * Allows **both short and long positions**
   * Tracks positions and PnL of active positions
-  * Implements financial accounting (portfolio cash, available cash, short positions, shares, PnL, etc.)
-  * **Custom reward logic** (varied rewards for different trading states)
+  * Implements financial accounting (available cash, shares, PnL, etc.)
+  * **Custom reward logic** (nuanced reward calculations for multiple categories of trading states)
   * **CSV logging** of agent activity and environment state (position type/size/value, reward, etc.)
   * **TensorBoard logging** of SB3 metrics (actor/critic losses, reward, etc.) plus a moving average of total PnL at episode end
 
+* **TCN Feature Extractor** (`tcn.py`)
+  * 7 layer 1D convolutional net with k = 5, out_channels = 128 and LayerNorm per layer preceding the activation (tanh)
+  * Uses a 1 x 1 convolutional layer as a projection layer to project input features (in_channels = 9)
+  * Separate feature extractor for actor and critic heads
+  * Final linear projection outputs latent vector to actor and critic MLP heads (these are two layers, 128, tanh activation)
+
 * **Training** (`training.py`)
-  * Define a base SB3 model (algorithm, layers, hyperparameters, training params)
+  * Define a base SB3 model (algorithm, network layers, hyperparameters, training params)
   * Run user-defined training splits from `config.yaml`
   * Save model and continue training later
-   
+  
 * **Validation** (`validation.py`)
   * Deterministic validation runs of saved models on unseen data
   * Select ticker(s) and number of steps 
@@ -229,12 +235,12 @@ The first layer of the extractor is a 1x1 Conv layer that mixes values across fe
           nn.Conv1d(in_channels=in_c, out_channels=features_dim, kernel_size=1),
 ```
 
-The extractor has seven `Conv1d` layers. Each uses 128 channels and **kernel size = 5**, giving a receptive field that covers the entire window with R = 31. I chose having deeper layers over using dilations.
+The extractor has three `Conv1d` layers with 128 output channels. Each one has **kernel size = 5** and with exponential dilations (1,2 and 4) this configuration gives a receptive field R = 29. This provides sufficient coverage of the timesteps in the data.
 After each conv:
 * `LayerNorm` with `[features_dim, timesteps]`
 * `Tanh` activation (preserves negative inputs that `ReLU` would zero)
 ```
-          causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5), 
+          causalConv1d(in_channels=features_dim, out_channels=features_dim, kernel_size=5, dilation=1),  
           nn.LayerNorm(normalized_shape=[features_dim, timesteps]),
           nn.Tanh(),
 ```
@@ -274,5 +280,7 @@ Current model parameters:
 Typical training runs with this model are done using 3 ticker pairings (AMD, NVIDIA, INTC: chip manufacturers) over 1 to 1.5 million timesteps (roughly 8 years of data). Validation is done on the remaining 2 years of unseen data for each ticker used during training. 
 
 ## Future Developments
-* Keep experimenting with net_arch and oba
+* Reintroduce shorting actions for agent
+* Add trending/consolidating market regime feature to obs design
+* Automated ablation testing of all features
 
